@@ -44,6 +44,12 @@ C:\Qt\5.15.0\msvc2019_64
 
 Restart you Qt Creator if it was running and this should register the module.
 
+## Building 
+
+OpenRGB2MQTT uses the OpenRGB submodule you will have to clone that into the OpenRGB2MQTT directory
+
+
+
 ## Installation
 
 1. Download the plugin file (OpenRGB2MQTT.dll)
