@@ -1,8 +1,8 @@
 #-----------------------------------------------------------------------------------------------#
 # OpenRGB2MQTT Plugin QMake Project                                                             #
 #-----------------------------------------------------------------------------------------------#
-include(mqtt_qt_setup/mkspecs/modules/qt_lib_mqtt.pri)
 
+include(mqtt_qt_setup/mkspecs/modules/qt_lib_mqtt.pri)
 #-----------------------------------------------------------------------------------------------#
 # Qt Configuration                                                                              #
 #-----------------------------------------------------------------------------------------------#
@@ -10,39 +10,35 @@ QT += core gui network widgets mqtt
 
 CONFIG += qmake_use
 
-DEFINES += OPENRGB2MQTT_LIBRARY
 DEFINES += OPENRGB2MQTT_PLUGIN_LIBRARY
 TEMPLATE = lib
 
 #-----------------------------------------------------------------------------------------------#
 # Build Configuration                                                                           #
 #-----------------------------------------------------------------------------------------------#
-CONFIG += \
-    plugin \
-    silent \
-    force_debug_info \
+CONFIG +=                                                                                       \
+    plugin                                                                                      \
+    silent                                                                                      \
+    force_debug_info                                                                            \
 
 win32:CONFIG(debug, debug|release) {
     TARGET = OpenRGB2MQTTd
     LIBS += -L"C:/Qt5.15.0/5.15.0/msvc2019_64/lib" -lQt5Mqttd
-    OBJECTS_DIR = $PWD/build/intermediate/debug/obj
-    MOC_DIR = $PWD/build/intermediate/debug/moc
-    RCC_DIR = $PWD/build/intermediate/debug/rcc
-    UI_DIR = $PWD/build/intermediate/debug/ui
-    PDB_DIR = $PWD/build/intermediate/debug
+    OBJECTS_DIR = $$PWD/build/intermediate/debug/obj
+    MOC_DIR = $$PWD/build/intermediate/debug/moc
+    RCC_DIR = $$PWD/build/intermediate/debug/rcc
+    UI_DIR = $$PWD/build/intermediate/debug/ui
+    PDB_DIR = $$PWD/build/intermediate/debug
+
     # Build directories
     DESTDIR = "D:/MCP/OpenRGB2MQTT/build/output"
+
     # Compiler settings
-    QMAKE_CXXFLAGS_RELEASE += /FS /MD /permissive- /Fd$shell_quote($PWD/build/intermediate/release/OpenRGB2MQTT.pdb)
-    QMAKE_CXXFLAGS_DEBUG += /FS /MDd /permissive- /Fd$shell_quote($PWD/build/intermediate/debug/OpenRGB2MQTT.pdb)
+    QMAKE_CXXFLAGS_RELEASE += /FS /MD /permissive- /Fd$$shell_quote($$PWD/build/intermediate/release/OpenRGB2MQTT.pdb)
+    QMAKE_CXXFLAGS_DEBUG += /FS /MDd /permissive- /Fd$$shell_quote($$PWD/build/intermediate/debug/OpenRGB2MQTT.pdb)
     QMAKE_LFLAGS += /MACHINE:X64
 } else {
     TARGET = OpenRGB2MQTT
-    OBJECTS_DIR = $PWD/build/intermediate/release/obj
-    MOC_DIR = $PWD/build/intermediate/release/moc
-    RCC_DIR = $PWD/build/intermediate/release/rcc
-    UI_DIR = $PWD/build/intermediate/release/ui
-    PDB_DIR = $PWD/build/intermediate/release
     LIBS += -lQt5Mqtt
 }
 
@@ -71,7 +67,6 @@ OTHER_FILES += OpenRGB2MQTT.json
 HEADERS +=                                                                                      \
     src/utils/EncryptionHelper.h                                                                   \
     src/plugin/OpenRGB2MQTT.h                                                                   \
-    src/mqtt/MQTTHandler.h                                                                      \
     src/devices/DeviceManager.h                                                                 \
     src/config/ConfigManager.h                                                                  \
     src/devices/base/MQTTRGBDevice.h                                                           \
@@ -91,7 +86,6 @@ HEADERS +=                                                                      
 SOURCES +=                                                                                      \
     src/utils/EncryptionHelper.cpp                                                                 \
     src/plugin/OpenRGB2MQTT.cpp                                                                 \
-    src/mqtt/MQTTHandler.cpp                                                                    \
     src/devices/DeviceManager.cpp                                                               \
     src/config/ConfigManager.cpp                                                                \
     src/devices/base/MQTTRGBDevice.cpp                                                         \
@@ -140,22 +134,35 @@ win32:contains(QMAKE_TARGET.arch, x86_64) {
         -lole32                                                                                 \
 }
 
-win32:HEADERS += \
-    src/mqtt/MQTTHandler.h \
+win32:HEADERS +=
+    src/mqtt/MQTTHandler.h                                                                      \
 
-win32:SOURCES += \
-    src/mqtt/MQTTHandler.cpp \
+win32:SOURCES +=
+    src/mqtt/MQTTHandler.cpp                                                                    \
 
 win32:DEFINES +=                                                                                \
     _MBCS                                                                                       \
+    WIN32                                                                                       \
+    _CRT_SECURE_NO_WARNINGS                                                                     \
+    _WINSOCK_DEPRECATED_NO_WARNINGS                                                             \
+    WIN32_LEAN_AND_MEAN                                                                         \
+    USE_HID_USAGE                                                                               \
+
+win32:QMAKE_CXXFLAGS += -wd4267  # Disable conversion size warnings
 
 #-----------------------------------------------------------------------------------------------#
 # Linux-specific Configuration                                                                  #
 #-----------------------------------------------------------------------------------------------#
 unix:!macx {
-    QMAKE_CXXFLAGS += -std=c++17
+    QMAKE_CXXFLAGS += -std=c++17 -Wno-psabi
     target.path=$$PREFIX/lib/openrgb/plugins/
     INSTALLS += target
+
+    HEADERS +=
+        src/mqtt/MQTTHandler_linux.h                                                            \
+
+    SOURCES +=
+        src/mqtt/MQTTHandler_linux.cpp                                                          \
 }
 
 #-----------------------------------------------------------------------------------------------#
