@@ -22,8 +22,8 @@ QT_BEGIN_MOC_NAMESPACE
 QT_WARNING_PUSH
 QT_WARNING_DISABLE_DEPRECATED
 struct qt_meta_stringdata_DeviceManager_t {
-    QByteArrayData data[13];
-    char stringdata0[167];
+    QByteArrayData data[15];
+    char stringdata0[201];
 };
 #define QT_MOC_LITERAL(idx, ofs, len) \
     Q_STATIC_BYTE_ARRAY_DATA_HEADER_INITIALIZER_WITH_OFFSET(len, \
@@ -44,14 +44,17 @@ QT_MOC_LITERAL(8, 91, 17), // "mqttPublishNeeded"
 QT_MOC_LITERAL(9, 109, 5), // "topic"
 QT_MOC_LITERAL(10, 115, 7), // "payload"
 QT_MOC_LITERAL(11, 123, 18), // "subscriptionNeeded"
-QT_MOC_LITERAL(12, 142, 24) // "onProtocolDevicesChanged"
+QT_MOC_LITERAL(12, 142, 24), // "onProtocolDevicesChanged"
+QT_MOC_LITERAL(13, 167, 23), // "onMQTTConnectionChanged"
+QT_MOC_LITERAL(14, 191, 9) // "connected"
 
     },
     "DeviceManager\0deviceListChanged\0\0"
     "deviceColorChanged\0std::string\0"
     "device_name\0RGBColor\0color\0mqttPublishNeeded\0"
     "topic\0payload\0subscriptionNeeded\0"
-    "onProtocolDevicesChanged"
+    "onProtocolDevicesChanged\0"
+    "onMQTTConnectionChanged\0connected"
 };
 #undef QT_MOC_LITERAL
 
@@ -61,7 +64,7 @@ static const uint qt_meta_data_DeviceManager[] = {
        8,       // revision
        0,       // classname
        0,    0, // classinfo
-       5,   14, // methods
+       6,   14, // methods
        0,    0, // properties
        0,    0, // enums/sets
        0,    0, // constructors
@@ -69,13 +72,14 @@ static const uint qt_meta_data_DeviceManager[] = {
        4,       // signalCount
 
  // signals: name, argc, parameters, tag, flags
-       1,    0,   39,    2, 0x06 /* Public */,
-       3,    2,   40,    2, 0x06 /* Public */,
-       8,    2,   45,    2, 0x06 /* Public */,
-      11,    1,   50,    2, 0x06 /* Public */,
+       1,    0,   44,    2, 0x06 /* Public */,
+       3,    2,   45,    2, 0x06 /* Public */,
+       8,    2,   50,    2, 0x06 /* Public */,
+      11,    1,   55,    2, 0x06 /* Public */,
 
  // slots: name, argc, parameters, tag, flags
-      12,    0,   53,    2, 0x0a /* Public */,
+      12,    0,   58,    2, 0x0a /* Public */,
+      13,    1,   59,    2, 0x0a /* Public */,
 
  // signals: parameters
     QMetaType::Void,
@@ -85,6 +89,7 @@ static const uint qt_meta_data_DeviceManager[] = {
 
  // slots: parameters
     QMetaType::Void,
+    QMetaType::Void, QMetaType::Bool,   14,
 
        0        // eod
 };
@@ -100,6 +105,7 @@ void DeviceManager::qt_static_metacall(QObject *_o, QMetaObject::Call _c, int _i
         case 2: _t->mqttPublishNeeded((*reinterpret_cast< const QString(*)>(_a[1])),(*reinterpret_cast< const QByteArray(*)>(_a[2]))); break;
         case 3: _t->subscriptionNeeded((*reinterpret_cast< const QString(*)>(_a[1]))); break;
         case 4: _t->onProtocolDevicesChanged(); break;
+        case 5: _t->onMQTTConnectionChanged((*reinterpret_cast< bool(*)>(_a[1]))); break;
         default: ;
         }
     } else if (_c == QMetaObject::IndexOfMethod) {
@@ -164,13 +170,13 @@ int DeviceManager::qt_metacall(QMetaObject::Call _c, int _id, void **_a)
     if (_id < 0)
         return _id;
     if (_c == QMetaObject::InvokeMetaMethod) {
-        if (_id < 5)
+        if (_id < 6)
             qt_static_metacall(this, _c, _id, _a);
-        _id -= 5;
+        _id -= 6;
     } else if (_c == QMetaObject::RegisterMethodArgumentMetaType) {
-        if (_id < 5)
+        if (_id < 6)
             *reinterpret_cast<int*>(_a[0]) = -1;
-        _id -= 5;
+        _id -= 6;
     }
     return _id;
 }

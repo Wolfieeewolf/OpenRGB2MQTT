@@ -14,6 +14,11 @@ ESPHomeDeviceManager::ESPHomeDeviceManager(QObject* parent)
 
 void ESPHomeDeviceManager::initializeManager()
 {
+    // NOTE: ESPHome support is currently disabled until stability issues are fixed
+    qDebug() << "[ESPHome] Skipping ESPHome initialization due to known stability issues";
+    return;
+
+    /*
     QMutexLocker locker(&device_mutex);
     if (api_manager == nullptr) {
         try {
@@ -38,6 +43,7 @@ void ESPHomeDeviceManager::initializeManager()
             }
         }
     }
+    */
 }
 
 ESPHomeDeviceManager::~ESPHomeDeviceManager()
@@ -59,13 +65,24 @@ ESPHomeDeviceManager::~ESPHomeDeviceManager()
 
 void ESPHomeDeviceManager::subscribeToTopics()
 {
+    // ESPHome support is disabled until stability issues are fixed
+    qDebug() << "[ESPHome] Skipping ESPHome topic subscription";
+    return;
+
+    /*
     // Subscribe to ESPHome discovery and state topics
     emit mqttPublishNeeded("esphome/+/light/+/config", QByteArray());
     emit mqttPublishNeeded("esphome/+/light/+/state", QByteArray());
+    */
 }
 
 void ESPHomeDeviceManager::discoverDevices()
 {
+    // ESPHome support is disabled until stability issues are fixed
+    qDebug() << "[ESPHome] Skipping ESPHome device discovery";
+    return;
+
+    /*
     qDebug() << "[ESPHome] Starting device discovery";
     // Start MQTT discovery
     subscribeToTopics();
@@ -76,11 +93,16 @@ void ESPHomeDeviceManager::discoverDevices()
     } else {
         qDebug() << "[ESPHome] API manager not initialized, skipping API discovery";
     }
+    */
 }
 
 std::vector<RGBController*> ESPHomeDeviceManager::getDevices() const
 {
     std::vector<RGBController*> result;
+    // ESPHome support is disabled
+    return result;
+
+    /*
     QMutexLocker locker(&device_mutex);  // Thread-safe access
     
     if (!initialization_complete) {
@@ -99,28 +121,33 @@ std::vector<RGBController*> ESPHomeDeviceManager::getDevices() const
         
         // Get API devices
         if (api_manager) {
-        auto api_devices = api_manager->getDevices();
-        for (auto device : api_devices) {
-        if (device && device->vendor == "ESPHome") {
-        if (auto* esphome_device = dynamic_cast<ESPHomeAPIDevice*>(device)) {
-                if (esphome_device->isInitialized()) {
-                        result.push_back(device);
+            auto api_devices = api_manager->getDevices();
+            for (auto device : api_devices) {
+                if (device && device->vendor == "ESPHome") {
+                    if (auto* esphome_device = dynamic_cast<ESPHomeAPIDevice*>(device)) {
+                        if (esphome_device->isInitialized()) {
+                            result.push_back(device);
                         }
-                        }
-                    } else if (device) { // Non-ESPHome devices
-                        result.push_back(device);
                     }
+                } else if (device) { // Non-ESPHome devices
+                    result.push_back(device);
                 }
             }
+        }
     } catch (const std::exception& e) {
         qDebug() << "[ESPHome] Error getting devices:" << e.what();
     }
     
     return result;
+    */
 }
 
-void ESPHomeDeviceManager::handleMQTTMessage(const QString& topic, const QByteArray& payload)
+void ESPHomeDeviceManager::handleMQTTMessage(const QString& /*topic*/, const QByteArray& /*payload*/)
 {
+    // ESPHome support is disabled
+    return;
+
+    /*
     QStringList parts = topic.split('/');
     
     // Expect format: esphome/devicename/light/name/(config|state)
@@ -150,12 +177,17 @@ void ESPHomeDeviceManager::handleMQTTMessage(const QString& topic, const QByteAr
             it.value()->UpdateFromMQTT(payload);
         }
     }
+    */
 }
 
-bool ESPHomeDeviceManager::processDeviceConfig(const QString& deviceName, 
-                                             const QString& lightName,
-                                             const QJsonObject& config)
+bool ESPHomeDeviceManager::processDeviceConfig(const QString& /*deviceName*/, 
+                                             const QString& /*lightName*/,
+                                             const QJsonObject& /*config*/)
 {
+    // ESPHome support is disabled
+    return false;
+
+    /*
     if (!isValidRGBLight(config)) {
         return false;
     }
@@ -196,10 +228,15 @@ bool ESPHomeDeviceManager::processDeviceConfig(const QString& deviceName,
         mqtt_devices[deviceTopic] = device;
         return true;
     }
+    */
 }
 
-bool ESPHomeDeviceManager::isValidRGBLight(const QJsonObject& config) const
+bool ESPHomeDeviceManager::isValidRGBLight(const QJsonObject& /*config*/) const
 {
+    // ESPHome support is disabled
+    return false;
+
+    /*
     // Check for RGB support via supported modes
     if (config.contains("supported_color_modes")) {
         QJsonArray modes = config["supported_color_modes"].toArray();
@@ -208,13 +245,19 @@ bool ESPHomeDeviceManager::isValidRGBLight(const QJsonObject& config) const
     
     // Fallback check for legacy RGB support
     return config["legacy_supports_rgb"].toBool(false);
+    */
 }
 
-void ESPHomeDeviceManager::cleanupDevice(const QString& topic)
+void ESPHomeDeviceManager::cleanupDevice(const QString& /*topic*/)
 {
+    // ESPHome support is disabled
+    return;
+
+    /*
     auto it = mqtt_devices.find(topic);
     if (it != mqtt_devices.end()) {
         delete it.value();
         mqtt_devices.remove(topic);
     }
+    */
 }

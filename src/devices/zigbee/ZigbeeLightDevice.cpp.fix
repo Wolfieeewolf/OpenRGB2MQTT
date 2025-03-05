@@ -1,0 +1,294 @@
+#include "ZigbeeLightDevice.h"
+#include <QJsonObject>
+#include <QJsonDocument>
+#include <QJsonArray>
+#include <QDebug>
+#include <cmath>
+
+ZigbeeLightDevice::ZigbeeLightDevice(const QString& name, QObject* parent) :
+    MQTTRGBDevice(name, "Zigbee", parent)
+{
+    // Set default mode
+    mode_value = 0; // Direct mode
+    mode_name = "Direct";
+}
+
+void ZigbeeLightDevice::handleMessage(const QString& topic, const QByteArray& payload)
+{
+    // Parse the JSON payload
+    QJsonDocument doc = QJsonDocument::fromJson(payload);
+    if (doc.isNull() || !doc.isObject()) {
+        qWarning() << "ZigbeeLightDevice: Invalid JSON payload";
+        return;
+    }
+
+    QJsonObject obj = doc.object();
+    
+    // Extract state
+    if (obj.contains("state")) {
+        QString state = obj["state"].toString();
+        device_state = (state.toUpper() == "ON");
+    }
+    
+    // Extract brightness if available
+    if (obj.contains("brightness")) {
+        int brightness = obj["brightness"].toInt();
+        // Zigbee brightness is 0-254, convert to 0-100%
+        brightness_value = round((brightness / 254.0) * 100.0);
+    }
+    
+    // Extract color data
+    if (obj.contains("color")) {
+        QJsonObject colorObj = obj["color"].toObject();
+        
+        // Check if we have xy color
+        if (colorObj.contains("x") && colorObj.contains("y")) {
+            double x = colorObj["x"].toDouble();
+            double y = colorObj["y"].toDouble();
+            
+            // Convert xy to RGB
+            unsigned char r, g, b;
+            xyToRGB(x, y, r, g, b);
+            
+            // Update the color
+            updateColor(r, g, b);
+        }
+    }
+    
+    // Alternative method - if RGB values are already provided by zigbee2mqtt
+    if (obj.contains("rgb_color") && obj["rgb_color"].isArray()) {
+        QJsonArray rgbArray = obj["rgb_color"].toArray();
+        if (rgbArray.size() >= 3) {
+            int r = rgbArray[0].toInt();
+            int g = rgbArray[1].toInt();
+            int b = rgbArray[2].toInt();
+            updateColor(r, g, b);
+        }
+    }
+    
+    // Emit signal that device has been updated
+    emit deviceUpdated();
+}
+
+void ZigbeeLightDevice::publishColorValues(unsigned char red, unsigned char green, unsigned char blue)
+{
+    // Convert RGB to xy color space
+    double x, y;
+    rgbToXY(red, green, blue, x, y);
+    
+    // Build the JSON payload
+    QJsonObject colorObj;
+    colorObj["x"] = x;
+    colorObj["y"] = y;
+    
+    QJsonObject payload;
+    payload["color"] = colorObj;
+    payload["state"] = "ON"; // Turn on the light when setting color
+    
+    // Convert to JSON string
+    QJsonDocument doc(payload);
+    QByteArray data = doc.toJson(QJsonDocument::Compact);
+    
+    // Send the message to set the color
+    QString setTopic = QString("zigbee2mqtt/%1/set").arg(device_name);
+    emit publishMessage(setTopic, data);
+}
+
+void ZigbeeLightDevice::setDevicePower(bool on)
+{
+    QJsonObject payload;
+    payload["state"] = on ? "ON" : "OFF";
+    
+    // Convert to JSON string
+    QJsonDocument doc(payload);
+    QByteArray data = doc.toJson(QJsonDocument::Compact);
+    
+    // Send the message to set the power state
+    QString setTopic = QString("zigbee2mqtt/%1/set").arg(device_name);
+    emit publishMessage(setTopic, data);
+}
+
+void ZigbeeLightDevice::setDeviceBrightness(int brightness)
+{
+    // Convert percentage (0-100) to Zigbee brightness (0-254)
+    int zigbeeBrightness = round((brightness / 100.0) * 254.0);
+    
+    QJsonObject payload;
+    payload["brightness"] = zigbeeBrightness;
+    payload["state"] = "ON"; // Turn on the light when setting brightness
+    
+    // Convert to JSON string
+    QJsonDocument doc(payload);
+    QByteArray data = doc.toJson(QJsonDocument::Compact);
+    
+    // Send the message
+    QString setTopic = QString("zigbee2mqtt/%1/set").arg(device_name);
+    emit publishMessage(setTopic, data);
+}
+
+// Convert RGB to CIE xy color space
+void ZigbeeLightDevice::rgbToXY(unsigned char r, unsigned char g, unsigned char b, double& x, double& y)
+{
+    // Convert RGB to sRGB
+    double red = r / 255.0;
+    double green = g / 255.0;
+    double blue = b / 255.0;
+    
+    // Apply gamma correction
+    red = (red > 0.04045) ? pow((red + 0.055) / 1.055, 2.4) : red / 12.92;
+    green = (green > 0.04045) ? pow((green + 0.055) / 1.055, 2.4) : green / 12.92;
+    blue = (blue > 0.04045) ? pow((blue + 0.055) / 1.055, 2.4) : blue / 12.92;
+    
+    // Convert to XYZ using sRGB matrix
+    double X = red * 0.649926 + green * 0.103455 + blue * 0.197109;
+    double Y = red * 0.234327 + green * 0.743075 + blue * 0.022598;
+    double Z = red * 0.000000 + green * 0.053077 + blue * 1.035763;
+    
+    // Calculate xy
+    double sum = X + Y + Z;
+    if (sum > 0) {
+        x = X / sum;
+        y = Y / sum;
+    } else {
+        x = 0.312713; // Default to D65 white point
+        y = 0.329016;
+    }
+    
+    // Ensure values are within gamut
+    constrainToGamut(x, y);
+}
+
+// Convert CIE xy to RGB
+void ZigbeeLightDevice::xyToRGB(double x, double y, unsigned char& r, unsigned char& g, unsigned char& b)
+{
+    // Make sure xy is within the color gamut
+    constrainToGamut(x, y);
+    
+    // Calculate XYZ
+    double Y = 1.0; // Brightness is handled separately
+    double X = (Y / y) * x;
+    double Z = (Y / y) * (1 - x - y);
+    
+    // Convert to RGB using XYZ to sRGB matrix
+    double red = X * 1.656492 - Y * 0.354851 - Z * 0.255038;
+    double green = -X * 0.707196 + Y * 1.655397 + Z * 0.036152;
+    double blue = X * 0.051713 - Y * 0.121364 + Z * 1.011530;
+    
+    // Apply reverse gamma correction
+    red = (red <= 0.0031308) ? 12.92 * red : 1.055 * pow(red, 1/2.4) - 0.055;
+    green = (green <= 0.0031308) ? 12.92 * green : 1.055 * pow(green, 1/2.4) - 0.055;
+    blue = (blue <= 0.0031308) ? 12.92 * blue : 1.055 * pow(blue, 1/2.4) - 0.055;
+    
+    // Clip values
+    red = qBound(0.0, red, 1.0);
+    green = qBound(0.0, green, 1.0);
+    blue = qBound(0.0, blue, 1.0);
+    
+    // Convert to 8-bit
+    r = round(red * 255.0);
+    g = round(green * 255.0);
+    b = round(blue * 255.0);
+}
+
+// Constrain xy point to the color gamut for Zigbee
+void ZigbeeLightDevice::constrainToGamut(double& x, double& y)
+{
+    // Define color gamut for Zigbee lights (Philips Hue gamut C)
+    // These points define a triangle in the CIE xy color space
+    const double redX = 0.692;
+    const double redY = 0.308;
+    const double greenX = 0.17;
+    const double greenY = 0.7;
+    const double blueX = 0.153;
+    const double blueY = 0.048;
+    
+    // Check if the point is inside the triangle
+    if (isPointInGamutTriangle(x, y, redX, redY, greenX, greenY, blueX, blueY)) {
+        return; // Point is already in the gamut
+    }
+    
+    // Find the closest point on any of the triangle edges
+    double closestX, closestY;
+    double minDist = 1.0e10;
+    
+    // Check each edge of the triangle
+    closestPointOnLine(x, y, redX, redY, greenX, greenY, closestX, closestY);
+    double dist = distance(x, y, closestX, closestY);
+    if (dist < minDist) {
+        minDist = dist;
+        x = closestX;
+        y = closestY;
+    }
+    
+    closestPointOnLine(x, y, greenX, greenY, blueX, blueY, closestX, closestY);
+    dist = distance(x, y, closestX, closestY);
+    if (dist < minDist) {
+        minDist = dist;
+        x = closestX;
+        y = closestY;
+    }
+    
+    closestPointOnLine(x, y, blueX, blueY, redX, redY, closestX, closestY);
+    dist = distance(x, y, closestX, closestY);
+    if (dist < minDist) {
+        x = closestX;
+        y = closestY;
+    }
+}
+
+// Check if a point is inside a triangle
+bool ZigbeeLightDevice::isPointInGamutTriangle(double x, double y, double x1, double y1, 
+                                              double x2, double y2, double x3, double y3)
+{
+    bool negative = false;
+    bool positive = false;
+    
+    double a = (x2 - x1) * (y - y1) - (y2 - y1) * (x - x1);
+    double b = (x3 - x2) * (y - y2) - (y3 - y2) * (x - x2);
+    double c = (x1 - x3) * (y - y3) - (y1 - y3) * (x - x3);
+    
+    if (a < 0) negative = true;
+    else positive = true;
+    if (b < 0) negative = true;
+    else positive = true;
+    if (c < 0) negative = true;
+    else positive = true;
+    
+    return !(negative && positive);
+}
+
+// Get closest point on a line segment
+void ZigbeeLightDevice::closestPointOnLine(double x, double y, double x1, double y1, 
+                                          double x2, double y2, double& closestX, double& closestY)
+{
+    double A = x - x1;
+    double B = y - y1;
+    double C = x2 - x1;
+    double D = y2 - y1;
+    
+    double dot = A * C + B * D;
+    double len_sq = C * C + D * D;
+    double param = -1;
+    
+    if (len_sq != 0) // In case the line segment has zero length
+        param = dot / len_sq;
+    
+    if (param < 0) {
+        closestX = x1;
+        closestY = y1;
+    }
+    else if (param > 1) {
+        closestX = x2;
+        closestY = y2;
+    }
+    else {
+        closestX = x1 + param * C;
+        closestY = y1 + param * D;
+    }
+}
+
+// Calculate Euclidean distance between two points
+double ZigbeeLightDevice::distance(double x1, double y1, double x2, double y2)
+{
+    return sqrt((x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1));
+}

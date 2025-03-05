@@ -25,14 +25,29 @@ CONFIG += \
     force_debug_info \
 
 # Build directories
-DESTDIR = "D:/MCP/OpenRGB2MQTT/build/output"
+# We'll build directly to output folder to avoid post-build copy issues
+win32 {
+    OUTPUT_DIR = $$PWD/build/output
+    DESTDIR = $$OUTPUT_DIR
+}
+unix:!macx {
+    DESTDIR = $$PWD/build/output
+}
+
+# Intermediate build folders
+OBJECTS_DIR = $$PWD/build/intermediate/obj
+MOC_DIR = $$PWD/build/intermediate/moc
+RCC_DIR = $$PWD/build/intermediate/rcc
+UI_DIR = $$PWD/build/intermediate/ui
 
 # Compiler settings
-QMAKE_CXXFLAGS_RELEASE += /FS /MD /permissive- /Fd$$shell_quote($$PWD/build/intermediate/release/OpenRGB2MQTT.pdb)
-QMAKE_CXXFLAGS_DEBUG += /FS /MDd /permissive- /Fd$$shell_quote($$PWD/build/intermediate/debug/OpenRGB2MQTT.pdb)
-QMAKE_LFLAGS += /MACHINE:X64
+win32 {
+    QMAKE_CXXFLAGS_RELEASE += /FS /MD /permissive- /Fd$$shell_quote($$PWD/build/intermediate/release/OpenRGB2MQTT.pdb)
+    QMAKE_CXXFLAGS_DEBUG += /FS /MDd /permissive- /Fd$$shell_quote($$PWD/build/intermediate/debug/OpenRGB2MQTT.pdb)
+    QMAKE_LFLAGS += /MACHINE:X64
+}
 
-win32:CONFIG(debug, debug|release) {
+CONFIG(debug, debug|release) {
     TARGET = OpenRGB2MQTTd
     OBJECTS_DIR = $$PWD/build/intermediate/debug/obj
     MOC_DIR = $$PWD/build/intermediate/debug/moc
@@ -40,8 +55,13 @@ win32:CONFIG(debug, debug|release) {
     UI_DIR = $$PWD/build/intermediate/debug/ui
     PDB_DIR = $$PWD/build/intermediate/debug
     
-    # For debug builds, use the release library since debug version isn't available
-    LIBS += -L$$PWD/mqtt_qt_setup/lib/ -lQt5Mqtt
+    win32 {
+        # For debug builds, use the release library since debug version isn't available
+        LIBS += -L$$PWD/mqtt_qt_setup/lib/ -lQt5Mqtt
+    }
+    unix:!macx {
+        LIBS += -lQt5Mqtt
+    }
 } else {
     TARGET = OpenRGB2MQTT
     OBJECTS_DIR = $$PWD/build/intermediate/release/obj
@@ -50,8 +70,13 @@ win32:CONFIG(debug, debug|release) {
     UI_DIR = $$PWD/build/intermediate/release/ui
     PDB_DIR = $$PWD/build/intermediate/release
     
-    # For release builds, use the release library
-    LIBS += -L$$PWD/mqtt_qt_setup/lib/ -lQt5Mqtt
+    win32 {
+        # For release builds, use the release library
+        LIBS += -L$$PWD/mqtt_qt_setup/lib/ -lQt5Mqtt
+    }
+    unix:!macx {
+        LIBS += -lQt5Mqtt
+    }
 }
 
 #-----------------------------------------------------------------------------------------------#
@@ -93,6 +118,9 @@ HEADERS += \
     src/devices/esphome/ESPHomeLightDevice.h \
     src/devices/esphome/ESPHomeAPIDevice.h \
     src/devices/esphome/ESPHomeAPIManager.h \
+    src/devices/ddp/DDPController.h \
+    src/devices/ddp/DDPDeviceManager.h \
+    src/devices/ddp/DDPLightDevice.h \
     OpenRGB/RGBController/RGBController.h \
     OpenRGB/RGBController/RGBControllerKeyNames.h \
 
@@ -112,6 +140,9 @@ SOURCES += \
     src/devices/esphome/ESPHomeLightDevice.cpp \
     src/devices/esphome/ESPHomeAPIDevice.cpp \
     src/devices/esphome/ESPHomeAPIManager.cpp \
+    src/devices/ddp/DDPController.cpp \
+    src/devices/ddp/DDPDeviceManager.cpp \
+    src/devices/ddp/DDPLightDevice.cpp \
     OpenRGB/RGBController/RGBController.cpp \
     OpenRGB/RGBController/RGBControllerKeyNames.cpp \
 
@@ -128,6 +159,7 @@ INCLUDEPATH += \
     src/devices/mosquitto \
     src/devices/zigbee \
     src/devices/esphome \
+    src/devices/ddp \
     OpenRGB/ \
     OpenRGB/i2c_smbus \
     OpenRGB/RGBController \
@@ -162,19 +194,37 @@ win32:DEFINES += \
 
 win32:QMAKE_CXXFLAGS += -wd4267  # Disable conversion size warnings
 
+# Add manual post-build step to copy DLL to OpenRGB plugins directory
+win32 {
+    PLUGIN_DIR = C:/Users/wolfi/AppData/Roaming/OpenRGB/plugins
+    
+    # Create target directory and copy file
+    QMAKE_POST_LINK = \
+        if not exist \"$$PLUGIN_DIR\" mkdir \"$$PLUGIN_DIR\" & \
+        copy /Y \"$$shell_path($$DESTDIR/$(TARGET))\" \"$$PLUGIN_DIR\"
+}
+
 #-----------------------------------------------------------------------------------------------#
 # Linux-specific Configuration                                                                  #
 #-----------------------------------------------------------------------------------------------#
 unix:!macx {
     QMAKE_CXXFLAGS += -std=c++17 -Wno-psabi
+    
+    # Allow installation to system directories
+    isEmpty(PREFIX) {
+        PREFIX = /usr/local
+    }
     target.path=$$PREFIX/lib/openrgb/plugins/
     INSTALLS += target
 
-    HEADERS += \
-        src/mqtt/MQTTHandler_linux.h \
-
-    SOURCES += \
-        src/mqtt/MQTTHandler_linux.cpp \
+    # Additional Linux-specific headers & sources
+    exists(src/mqtt/MQTTHandler_linux.h) {
+        HEADERS += src/mqtt/MQTTHandler_linux.h
+    }
+    
+    exists(src/mqtt/MQTTHandler_linux.cpp) {
+        SOURCES += src/mqtt/MQTTHandler_linux.cpp
+    }
 }
 
 #-----------------------------------------------------------------------------------------------#
