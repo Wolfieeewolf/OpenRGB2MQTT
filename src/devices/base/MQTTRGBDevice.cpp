@@ -2,7 +2,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
-#include <QDebug>
+#include "OpenRGB/LogManager.h"
 #include <algorithm>
 
 MQTTRGBDevice::MQTTRGBDevice(const LightInfo& info)
@@ -96,8 +96,8 @@ void MQTTRGBDevice::DeviceUpdateLEDs()
         // We'll just send the format without the template syntax
         QString payload = QString::asprintf("#%02x%02x%02x0000", r, g, b);
         
-        qDebug() << "Sending color values - R:" << r << "G:" << g << "B:" << b;
-        qDebug() << "Sending MQTT payload:" << payload << "to topic:" << mqtt_topic;
+        LOG_DEBUG("Sending color values - R: %d G: %d B: %d", r, g, b);
+        LOG_DEBUG("Sending MQTT payload: %s to topic: %s", qUtf8Printable(payload), qUtf8Printable(mqtt_topic));
         emit mqttPublishNeeded(mqtt_topic, payload.toUtf8());
     }
     // Multiple LED support would go here if needed

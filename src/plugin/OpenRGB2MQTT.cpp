@@ -2,7 +2,6 @@
 #include "mqtt/MQTTHandler.h"
 #include "devices/DeviceManager.h"
 #include "config/ConfigManager.h"
-#include "devices/ddp/DDPDeviceManager.h"
 #include <QVBoxLayout>
 #include <QGridLayout>
 #include <QLineEdit>
@@ -11,7 +10,7 @@
 #include <QSpinBox>
 #include <QCheckBox>
 #include <QTimer>
-#include <QDebug>
+#include "OpenRGB/LogManager.h"
 #include <QTabWidget>
 #include <QGroupBox>
 #include <QHeaderView>
@@ -30,7 +29,6 @@ OpenRGB2MQTT::OpenRGB2MQTT() :
     resource_manager(nullptr),
     mqtt_handler(nullptr),
     device_manager(nullptr),
-    ddp_manager(nullptr),
     config_manager(nullptr),
     main_widget(nullptr),
     components_initialized(false),
@@ -47,10 +45,10 @@ OpenRGBPluginInfo OpenRGB2MQTT::GetPluginInfo()
 {
     OpenRGBPluginInfo info;
     info.Name = "OpenRGB2MQTT";
-    info.Description = "MQTT integration for OpenRGB with DDP support";
+    info.Description = "MQTT integration for OpenRGB";
     info.Version = VERSION_STRING;
     info.Commit = "N/A";
-    info.URL = "https://github.com/yourusername/OpenRGB2MQTT";
+    info.URL = "https://github.com/wolfieeee/OpenRGB2MQTT";
     info.Location = OPENRGB_PLUGIN_LOCATION_SETTINGS;
     info.Label = "OpenRGB2MQTT";
 
@@ -94,22 +92,9 @@ void OpenRGB2MQTT::Load(ResourceManagerInterface* resource_manager_ptr)
             throw std::runtime_error("Failed to create DeviceManager");
         }
         
-        // Create DDP manager
-        ddp_manager = new DDPDeviceManager(this);
-        if (!ddp_manager) {
-            throw std::runtime_error("Failed to create DDPDeviceManager");
-        }
-        
         // Register managers with device manager
-        device_manager->setDDPDeviceManager(ddp_manager);
         device_manager->setConfigManager(config_manager);
         device_manager->setMQTTHandler(mqtt_handler);
-        
-        // Configure DDP manager
-        ddp_manager->setEnabled(config_manager->getDDPEnabled());
-        if (config_manager->getDDPEnabled()) {
-            ddp_manager->setDeviceConfig(config_manager->getDDPDevices());
-        }
 
         // Create GUI components
         createMainWidget();
@@ -118,7 +103,7 @@ void OpenRGB2MQTT::Load(ResourceManagerInterface* resource_manager_ptr)
         QTimer::singleShot(500, this, &OpenRGB2MQTT::delayedInit);
 
     } catch (const std::exception& e) {
-        qWarning() << "[OpenRGB2MQTT] Initialization error:" << e.what();
+        LOG_WARNING("[OpenRGB2MQTT] Initialization error: %s", e.what());
         cleanup();
     }
 }
@@ -130,25 +115,28 @@ void OpenRGB2MQTT::delayedInit()
     try {
         // Connect signals/slots with Direct connection for thread safety
         if (mqtt_handler && device_manager) {
+            // Direct connection for MQTT messages to ensure immediate processing
             connect(mqtt_handler, &MQTTHandler::messageReceived,
                     device_manager, &DeviceManager::handleMQTTMessage,
                     Qt::DirectConnection);
+            
+            LOG_INFO("Connected MQTT message signal to DeviceManager");
         }
 
         if (device_manager && mqtt_handler) {
+            // Connect device manager to MQTT handler for publishing
             connect(device_manager, &DeviceManager::mqttPublishNeeded,
                     this, [this](const QString& topic, const QByteArray& payload) {
                         if (mqtt_handler) {
+                            LOG_DEBUG("Publishing to MQTT topic: %s", qUtf8Printable(topic));
                             mqtt_handler->publish(topic, payload);
                         }
                     }, Qt::QueuedConnection);
+                    
+            LOG_INFO("Connected DeviceManager publish signal to MQTT handler");
         }
                 
-        // Connect DDP signals
-        if (ddp_manager) {
-            connect(ddp_manager, &DDPDeviceManager::discoveryFinished, 
-                    this, &OpenRGB2MQTT::onDDPDiscoveryFinished);
-        }
+
 
         // Mark initialization complete
         components_initialized = true;
@@ -168,7 +156,7 @@ void OpenRGB2MQTT::delayedInit()
         }
 
     } catch (const std::exception& e) {
-        qWarning() << "[OpenRGB2MQTT] Delayed initialization error:" << e.what();
+        LOG_WARNING("[OpenRGB2MQTT] Delayed initialization error: %s", e.what());
         cleanup();
     }
 }
@@ -190,10 +178,7 @@ void OpenRGB2MQTT::Unload()
         mqtt_handler->disconnect();
     }
     
-    // Disable DDP early to prevent any further network activity
-    if (ddp_manager) {
-        ddp_manager->setEnabled(false);
-    }
+
 
     // Clear QTimer connections to prevent delayed signals from firing during cleanup
     if (post_discovery_timer) {
@@ -253,12 +238,9 @@ void OpenRGB2MQTT::createMainWidget()
     // Create tab widget for all protocols and device management
     QTabWidget* tabWidget = new QTabWidget();
     
-    // Create tabs - Devices tab first as requested
+    // Create tabs - Devices tab first
     createDevicesTab(tabWidget);
     createMQTTTab(tabWidget);
-    createDDPTab(tabWidget);
-    createESPHomeTab(tabWidget);
-    createZigbeeTab(tabWidget);
     
     // Add tab widget to main layout
     layout->addWidget(tabWidget);
@@ -349,194 +331,11 @@ void OpenRGB2MQTT::createMQTTTab(QTabWidget* tabWidget)
     tabWidget->addTab(mqtt_tab, "MQTT");
 }
 
-void OpenRGB2MQTT::createDDPTab(QTabWidget* tabWidget)
-{
-    // Create DDP tab
-    ddp_tab = new QWidget();
-    QVBoxLayout* ddp_layout = new QVBoxLayout(ddp_tab);
-    
-    // DDP Enable checkbox
-    QHBoxLayout* enable_layout = new QHBoxLayout();
-    ddp_enabled = new QCheckBox("Enable DDP Protocol");
-    ddp_enabled->setChecked(config_manager->getDDPEnabled());
-    connect(ddp_enabled, SIGNAL(stateChanged(int)), this, SLOT(onDDPEnabledChanged(int)));
-    
-    ddp_status_label = new QLabel("Disabled");
-    if (config_manager->getDDPEnabled()) {
-        ddp_status_label->setText("Enabled");
-    }
-    
-    enable_layout->addWidget(ddp_enabled);
-    enable_layout->addWidget(ddp_status_label);
-    enable_layout->addStretch();
-    
-    // Add enable layout
-    ddp_layout->addLayout(enable_layout);
-    
-    // Device list group
-    QGroupBox* device_group = new QGroupBox("DDP Devices");
-    QVBoxLayout* device_layout = new QVBoxLayout(device_group);
-    
-    // Device table
-    ddp_device_table = new QTableWidget(0, 4);
-    ddp_device_table->setHorizontalHeaderLabels({"Name", "IP Address", "LEDs", "Type"});
-    ddp_device_table->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
-    ddp_device_table->setSelectionBehavior(QTableWidget::SelectRows);
-    ddp_device_table->setSelectionMode(QTableWidget::SingleSelection);
-    connect(ddp_device_table, &QTableWidget::itemSelectionChanged, 
-            this, &OpenRGB2MQTT::onDDPDeviceSelectionChanged);
-    
-    device_layout->addWidget(ddp_device_table);
-    
-    // Buttons for device management
-    QHBoxLayout* button_layout = new QHBoxLayout();
-    
-    ddp_discover_button = new QPushButton("Discover Devices");
-    connect(ddp_discover_button, &QPushButton::clicked, 
-            this, &OpenRGB2MQTT::onDDPDiscoverButtonClicked);
-    
-    ddp_add_button = new QPushButton("Add Device");
-    connect(ddp_add_button, &QPushButton::clicked, 
-            this, &OpenRGB2MQTT::onDDPAddDeviceButtonClicked);
-    
-    ddp_remove_button = new QPushButton("Remove Device");
-    ddp_remove_button->setEnabled(false);
-    connect(ddp_remove_button, &QPushButton::clicked, 
-            this, &OpenRGB2MQTT::onDDPRemoveDeviceButtonClicked);
-    
-    button_layout->addWidget(ddp_discover_button);
-    button_layout->addWidget(ddp_add_button);
-    button_layout->addWidget(ddp_remove_button);
-    
-    device_layout->addLayout(button_layout);
-    
-    // Discovery status
-    ddp_discovery_status = new QLabel("");
-    device_layout->addWidget(ddp_discovery_status);
-    
-    // Add device group to layout
-    ddp_layout->addWidget(device_group);
-    
-    // Manual device entry group
-    QGroupBox* manual_group = new QGroupBox("Manual Device Entry");
-    QGridLayout* manual_layout = new QGridLayout(manual_group);
-    
-    int row = 0;
-    
-    // Device name
-    manual_layout->addWidget(new QLabel("Device Name:"), row, 0);
-    ddp_device_name = new QLineEdit();
-    manual_layout->addWidget(ddp_device_name, row++, 1);
-    
-    // IP address
-    manual_layout->addWidget(new QLabel("IP Address:"), row, 0);
-    ddp_device_ip = new QLineEdit();
-    manual_layout->addWidget(ddp_device_ip, row++, 1);
-    
-    // LED count
-    manual_layout->addWidget(new QLabel("LED Count:"), row, 0);
-    ddp_device_leds = new QSpinBox();
-    ddp_device_leds->setRange(1, 1500);
-    ddp_device_leds->setValue(60);
-    manual_layout->addWidget(ddp_device_leds, row++, 1);
-    
-    // Add manual group to layout
-    ddp_layout->addWidget(manual_group);
-    
-    // Add to tab widget
-    tabWidget->addTab(ddp_tab, "DDP Protocol");
-    
-    // Initialize device table
-    updateDDPDeviceList();
-}
 
-void OpenRGB2MQTT::createESPHomeTab(QTabWidget* tabWidget)
-{
-    // Create ESPHome tab
-    esphome_tab = new QWidget();
-    QVBoxLayout* esphome_layout = new QVBoxLayout(esphome_tab);
-    
-    // ESPHome Enable checkbox - currently disabled
-    QHBoxLayout* enable_layout = new QHBoxLayout();
-    esphome_enabled = new QCheckBox("Enable ESPHome Integration (Currently Disabled)");
-    esphome_enabled->setChecked(false);
-    esphome_enabled->setEnabled(false); // Disabled for now
-    connect(esphome_enabled, SIGNAL(stateChanged(int)), this, SLOT(onESPHomeEnabledChanged(int)));
-    
-    esphome_status_label = new QLabel("Disabled");
-    
-    enable_layout->addWidget(esphome_enabled);
-    enable_layout->addWidget(esphome_status_label);
-    enable_layout->addStretch();
-    
-    // Add enable layout
-    esphome_layout->addLayout(enable_layout);
-    
-    // Device list group
-    QGroupBox* device_group = new QGroupBox("ESPHome Devices");
-    QVBoxLayout* device_layout = new QVBoxLayout(device_group);
-    
-    // Device table
-    esphome_device_table = new QTableWidget(0, 3);
-    esphome_device_table->setHorizontalHeaderLabels({"Name", "IP Address", "Type"});
-    esphome_device_table->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
-    esphome_device_table->setSelectionBehavior(QTableWidget::SelectRows);
-    esphome_device_table->setEnabled(false); // Disabled for now
-    
-    device_layout->addWidget(esphome_device_table);
-    
-    // Info label
-    QLabel* info_label = new QLabel("ESPHome integration is currently disabled in this version.");
-    info_label->setStyleSheet("color: red;");
-    device_layout->addWidget(info_label);
-    
-    // Add device group to layout
-    esphome_layout->addWidget(device_group);
-    esphome_layout->addStretch();
-    
-    // Add to tab widget
-    tabWidget->addTab(esphome_tab, "ESPHome");
-}
 
-void OpenRGB2MQTT::createZigbeeTab(QTabWidget* tabWidget)
-{
-    // Create Zigbee tab
-    zigbee_tab = new QWidget();
-    QVBoxLayout* zigbee_layout = new QVBoxLayout(zigbee_tab);
-    
-    // Status info
-    QHBoxLayout* status_layout = new QHBoxLayout();
-    zigbee_status_label = new QLabel("Zigbee devices will appear here when discovered via MQTT");
-    
-    zigbee_refresh_button = new QPushButton("Refresh");
-    connect(zigbee_refresh_button, SIGNAL(clicked()), this, SLOT(onZigbeeRefreshClicked()));
-    
-    status_layout->addWidget(zigbee_status_label);
-    status_layout->addWidget(zigbee_refresh_button);
-    status_layout->addStretch();
-    
-    // Add status layout
-    zigbee_layout->addLayout(status_layout);
-    
-    // Device list group
-    QGroupBox* device_group = new QGroupBox("Zigbee Devices");
-    QVBoxLayout* device_layout = new QVBoxLayout(device_group);
-    
-    // Device table
-    zigbee_device_table = new QTableWidget(0, 3);
-    zigbee_device_table->setHorizontalHeaderLabels({"Name", "ID", "Type"});
-    zigbee_device_table->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
-    zigbee_device_table->setSelectionBehavior(QTableWidget::SelectRows);
-    
-    device_layout->addWidget(zigbee_device_table);
-    
-    // Add device group to layout
-    zigbee_layout->addWidget(device_group);
-    zigbee_layout->addStretch();
-    
-    // Add to tab widget
-    tabWidget->addTab(zigbee_tab, "Zigbee");
-}
+
+
+
 
 void OpenRGB2MQTT::createDevicesTab(QTabWidget* tabWidget)
 {
@@ -574,7 +373,7 @@ void OpenRGB2MQTT::createDevicesTab(QTabWidget* tabWidget)
     devices_layout->addWidget(success_label);
     
     // Add to tab widget
-    tabWidget->addTab(devices_tab, "Devices");
+    tabWidget->addTab(devices_tab, "MQTT Devices");
 }
 
 void OpenRGB2MQTT::onConnectButtonClicked()
@@ -605,7 +404,6 @@ void OpenRGB2MQTT::onConnectButtonClicked()
         }
         
         // Refresh the devices tabs
-        updateZigbeeDeviceList();
         updateAllDevicesTable();
     }
 }
@@ -617,139 +415,7 @@ void OpenRGB2MQTT::onAutoConnectChanged(int state)
     }
 }
 
-void OpenRGB2MQTT::onDDPEnabledChanged(int state)
-{
-    bool enabled = (state == Qt::Checked);
-    
-    if (config_manager) {
-        config_manager->setDDPEnabled(enabled);
-    }
-    
-    if (ddp_manager) {
-        ddp_manager->setEnabled(enabled);
-    }
-    
-    updateDDPStatus(enabled);
-}
 
-void OpenRGB2MQTT::onDDPDiscoverButtonClicked()
-{
-    if (!ddp_manager || !ddp_manager->isEnabled()) {
-        QMessageBox::warning(main_widget, "DDP Discovery", 
-                           "Please enable DDP protocol first.");
-        return;
-    }
-    
-    ddp_discovery_status->setText("Discovering devices...");
-    ddp_discover_button->setEnabled(false);
-    
-    // Start discovery
-    ddp_manager->discoverDevices();
-}
-
-void OpenRGB2MQTT::onDDPAddDeviceButtonClicked()
-{
-    if (!ddp_manager || !ddp_manager->isEnabled()) {
-        QMessageBox::warning(main_widget, "DDP Add Device", 
-                           "Please enable DDP protocol first.");
-        return;
-    }
-    
-    QString name = ddp_device_name->text().trimmed();
-    QString ip = ddp_device_ip->text().trimmed();
-    int leds = ddp_device_leds->value();
-    
-    if (name.isEmpty() || ip.isEmpty()) {
-        QMessageBox::warning(main_widget, "DDP Add Device", 
-                           "Please enter both a name and IP address.");
-        return;
-    }
-    
-    // Add the device
-    if (ddp_manager->addDevice(name, ip, leds, "Manual")) {
-        // Clear inputs
-        ddp_device_name->clear();
-        ddp_device_ip->clear();
-        ddp_device_leds->setValue(60);
-        
-        // Update device list
-        updateDDPDeviceList();
-        
-        // Save to config
-        if (config_manager) {
-            config_manager->setDDPDevices(ddp_manager->getDeviceConfig());
-        }
-    } else {
-        QMessageBox::warning(main_widget, "DDP Add Device", 
-                           "Failed to add device. It may already exist.");
-    }
-}
-
-void OpenRGB2MQTT::onDDPRemoveDeviceButtonClicked()
-{
-    if (!ddp_manager || !ddp_manager->isEnabled()) {
-        return;
-    }
-    
-    QList<QTableWidgetItem*> items = ddp_device_table->selectedItems();
-    if (items.isEmpty()) {
-        return;
-    }
-    
-    // Get IP from row (column 1)
-    QString ip = ddp_device_table->item(items.first()->row(), 1)->text();
-    
-    // Ask for confirmation
-    QMessageBox::StandardButton reply;
-    reply = QMessageBox::question(main_widget, "Remove Device", 
-                                "Are you sure you want to remove this device?",
-                                QMessageBox::Yes|QMessageBox::No);
-                                
-    if (reply == QMessageBox::Yes) {
-        // Remove the device
-        if (ddp_manager->removeDevice(ip)) {
-            // Update device list
-            updateDDPDeviceList();
-            
-            // Save to config
-            if (config_manager) {
-                config_manager->setDDPDevices(ddp_manager->getDeviceConfig());
-            }
-        }
-    }
-}
-
-void OpenRGB2MQTT::onDDPDeviceSelectionChanged()
-{
-    QList<QTableWidgetItem*> items = ddp_device_table->selectedItems();
-    ddp_remove_button->setEnabled(!items.isEmpty());
-}
-
-void OpenRGB2MQTT::onDDPDiscoveryFinished(int count)
-{
-    ddp_discovery_status->setText(QString("Discovery complete. Found %1 devices.").arg(count));
-    ddp_discover_button->setEnabled(true);
-    
-    // Update device list
-    updateDDPDeviceList();
-    
-    // Save to config
-    if (config_manager) {
-        config_manager->setDDPDevices(ddp_manager->getDeviceConfig());
-    }
-}
-
-void OpenRGB2MQTT::onESPHomeEnabledChanged(int state)
-{
-    // ESPHome is currently disabled, so this function is a placeholder
-    bool enabled = (state == Qt::Checked);
-    updateESPHomeStatus(enabled);
-}
-
-void OpenRGB2MQTT::onZigbeeRefreshClicked()
-{
-    updateZigbeeDeviceList();
-}
 
 void OpenRGB2MQTT::onDeviceActionButtonClicked()
 {
@@ -775,7 +441,7 @@ void OpenRGB2MQTT::onDeviceActionButtonClicked()
         }
         
         if (row == -1) {
-            qWarning() << "Could not find button's row";
+            LOG_WARNING("Could not find button's row");
             button->setEnabled(true);
             return;
         }
@@ -783,13 +449,13 @@ void OpenRGB2MQTT::onDeviceActionButtonClicked()
         // Get device name safely
         QTableWidgetItem* nameItem = all_devices_table->item(row, 0);
         if (!nameItem) {
-            qWarning() << "Could not find name item in row" << row;
+            LOG_WARNING("Could not find name item in row %d", row);
             button->setEnabled(true);
             return;
         }
         
         QString deviceName = nameItem->text();
-        qDebug() << "Device action for:" << deviceName;
+        LOG_DEBUG("Device action for: %s", qUtf8Printable(deviceName));
         
         // Check current status to determine action
         bool currently_enabled = false;
@@ -797,7 +463,7 @@ void OpenRGB2MQTT::onDeviceActionButtonClicked()
             try {
                 currently_enabled = device_manager->isDeviceAddedToOpenRGB(deviceName.toStdString());
             } catch (...) {
-                qWarning() << "Error checking current device status";
+                LOG_WARNING("Error checking current device status");
                 currently_enabled = false;
             }
         }
@@ -827,10 +493,10 @@ void OpenRGB2MQTT::onDeviceActionButtonClicked()
             try {
                 success = device_manager->addDeviceToOpenRGB(deviceName.toStdString(), new_status);
             } catch (const std::exception& e) {
-                qCritical() << "Exception when adding device to OpenRGB:" << e.what();
+                LOG_ERROR("Exception when adding device to OpenRGB: %s", e.what());
                 success = false;
             } catch (...) {
-                qCritical() << "Unknown exception when adding device to OpenRGB";
+                LOG_ERROR("Unknown exception when adding device to OpenRGB");
                 success = false;
             }
         }
@@ -854,9 +520,9 @@ void OpenRGB2MQTT::onDeviceActionButtonClicked()
             if (button) button->setEnabled(true);
         });
     } catch (const std::exception& e) {
-        qCritical() << "Critical exception in button handler:" << e.what();
+        LOG_ERROR("Critical exception in button handler: %s", e.what());
     } catch (...) {
-        qCritical() << "Unknown critical exception in button handler";
+        LOG_ERROR("Unknown critical exception in button handler");;
     }
 }
 
@@ -962,7 +628,6 @@ void OpenRGB2MQTT::initializeConnection()
     // Reset device UI state after connection attempt
     if (device_manager) {
         // Force a UI update and clear device list
-        updateZigbeeDeviceList();
         updateAllDevicesTable();
     }
 }
@@ -981,7 +646,6 @@ void OpenRGB2MQTT::updateMQTTStatus(bool connected)
                 
                 // Update UI after a brief delay to show newly discovered devices
                 QTimer::singleShot(2000, this, [this]() {
-                    updateZigbeeDeviceList();
                     updateAllDevicesTable();
                 });
             });
@@ -989,116 +653,7 @@ void OpenRGB2MQTT::updateMQTTStatus(bool connected)
     }
 }
 
-void OpenRGB2MQTT::updateDDPStatus(bool enabled)
-{
-    ddp_status_label->setText(enabled ? "Enabled" : "Disabled");
-    
-    // Update UI elements
-    ddp_discover_button->setEnabled(enabled);
-    ddp_add_button->setEnabled(enabled);
-    ddp_device_table->setEnabled(enabled);
-    ddp_device_name->setEnabled(enabled);
-    ddp_device_ip->setEnabled(enabled);
-    ddp_device_leds->setEnabled(enabled);
-}
 
-void OpenRGB2MQTT::updateDDPDeviceList()
-{
-    if (!ddp_manager) return;
-    
-    // Get device config
-    QJsonArray devices = ddp_manager->getDeviceConfig();
-    
-    // Clear table
-    ddp_device_table->clearContents();
-    ddp_device_table->setRowCount(devices.size());
-    
-    // Fill table
-    for (int i = 0; i < devices.size(); i++) {
-        QJsonObject dev = devices[i].toObject();
-        
-        QTableWidgetItem* nameItem = new QTableWidgetItem(dev["name"].toString());
-        QTableWidgetItem* ipItem = new QTableWidgetItem(dev["ip"].toString());
-        QTableWidgetItem* ledsItem = new QTableWidgetItem(QString::number(dev["leds"].toInt()));
-        QTableWidgetItem* typeItem = new QTableWidgetItem(dev["type"].toString());
-        
-        nameItem->setFlags(nameItem->flags() & ~Qt::ItemIsEditable);
-        ipItem->setFlags(ipItem->flags() & ~Qt::ItemIsEditable);
-        ledsItem->setFlags(ledsItem->flags() & ~Qt::ItemIsEditable);
-        typeItem->setFlags(typeItem->flags() & ~Qt::ItemIsEditable);
-        
-        ddp_device_table->setItem(i, 0, nameItem);
-        ddp_device_table->setItem(i, 1, ipItem);
-        ddp_device_table->setItem(i, 2, ledsItem);
-        ddp_device_table->setItem(i, 3, typeItem);
-    }
-}
-
-void OpenRGB2MQTT::updateESPHomeStatus(bool enabled)
-{
-    esphome_status_label->setText(enabled ? "Enabled" : "Disabled");
-    esphome_device_table->setEnabled(enabled);
-}
-
-void OpenRGB2MQTT::updateESPHomeDeviceList()
-{
-    // ESPHome integration is currently disabled
-    esphome_device_table->clearContents();
-    esphome_device_table->setRowCount(0);
-}
-
-void OpenRGB2MQTT::updateZigbeeStatus(bool enabled)
-{
-    zigbee_status_label->setText(enabled ? "Enabled" : "Waiting for devices");
-}
-
-void OpenRGB2MQTT::updateZigbeeDeviceList()
-{
-    if (!device_manager) return;
-    
-    // Clear the table
-    zigbee_device_table->clearContents();
-    zigbee_device_table->setRowCount(0);
-    
-    // Get all available devices
-    auto all_devices = device_manager->getAllAvailableDevices();
-    
-    int row = 0;
-    
-    // Filter only Zigbee devices and add them to the table
-    for (const auto& device_info : all_devices) {
-        const std::string& name = device_info.first;
-        const std::string& protocol = device_info.second;
-        
-        // Only include Zigbee devices
-        if (protocol != "Zigbee") {
-            continue;
-        }
-        
-        zigbee_device_table->insertRow(row);
-        
-        QTableWidgetItem* nameItem = new QTableWidgetItem(QString::fromStdString(name));
-        QTableWidgetItem* idItem = new QTableWidgetItem(QString("N/A")); // ID not available
-        QTableWidgetItem* typeItem = new QTableWidgetItem(QString("RGB Light"));
-        
-        nameItem->setFlags(nameItem->flags() & ~Qt::ItemIsEditable);
-        idItem->setFlags(idItem->flags() & ~Qt::ItemIsEditable);
-        typeItem->setFlags(typeItem->flags() & ~Qt::ItemIsEditable);
-        
-        zigbee_device_table->setItem(row, 0, nameItem);
-        zigbee_device_table->setItem(row, 1, idItem);
-        zigbee_device_table->setItem(row, 2, typeItem);
-        
-        row++;
-    }
-    
-    // Update status label
-    if (row > 0) {
-        zigbee_status_label->setText(QString("Found %1 Zigbee devices").arg(row));
-    } else {
-        zigbee_status_label->setText("No Zigbee devices found");
-    }
-}
 
 void OpenRGB2MQTT::cleanup()
 {
@@ -1113,11 +668,7 @@ void OpenRGB2MQTT::cleanup()
         device_manager = nullptr;
     }
     
-    if (ddp_manager) {
-        ddp_manager->setEnabled(false);
-        delete ddp_manager;
-        ddp_manager = nullptr;
-    }
+
     
     if (config_manager) {
         delete config_manager;

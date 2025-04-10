@@ -12,9 +12,6 @@
 
 // Forward declarations
 class MosquittoDeviceManager;
-class ZigbeeDeviceManager;
-class ESPHomeDeviceManager;
-class DDPDeviceManager;
 
 class DeviceManager : public QObject
 {
@@ -35,6 +32,7 @@ public:
     /*------------------------------------------------------*\
     | RGB control functions                                   |
     \*------------------------------------------------------*/
+    // Following OpenRGB Controller API
     bool setDeviceColor(const std::string& device_name, RGBColor color);
     bool setZoneColor(const std::string& device_name, const std::string& zone_name, RGBColor color);
     bool setLEDColor(const std::string& device_name, int led_index, RGBColor color);
@@ -42,7 +40,6 @@ public:
     /*------------------------------------------------------*\
     | Protocol device managers                                |
     \*------------------------------------------------------*/
-    void setDDPDeviceManager(DDPDeviceManager* manager);
     void setConfigManager(ConfigManager* manager);
     void setMQTTHandler(QObject* handler);
     /*------------------------------------------------------*\
@@ -77,9 +74,6 @@ private:
     void subscribeToTopics();
 
     MosquittoDeviceManager* mosquitto_manager;
-    ZigbeeDeviceManager* zigbee_manager;
-    ESPHomeDeviceManager* esphome_manager;
-    DDPDeviceManager* ddp_manager;
     QTimer* update_timer;
     mutable QMutex device_mutex;
     std::vector<RGBController*> cached_devices;

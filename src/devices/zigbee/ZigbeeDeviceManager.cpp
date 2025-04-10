@@ -3,12 +3,31 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
-#include <QDebug>
+#include <QTimer>
+#include "OpenRGB/LogManager.h"
 #include <QMutexLocker>
 
 ZigbeeDeviceManager::ZigbeeDeviceManager(QObject* parent)
     : QObject(parent)
 {
+    // Send a test message as soon as the manager is created
+    QTimer::singleShot(3000, this, [this]() {
+        // Create a test message to turn the "Worm" light blue
+        QJsonObject color;
+        color["x"] = 0.1691;
+        color["y"] = 0.0441;
+        
+        QJsonObject payload;
+        payload["state"] = "ON";
+        payload["color"] = color;
+        
+        QJsonDocument doc(payload);
+        QByteArray data = doc.toJson(QJsonDocument::Compact);
+        
+        // Send directly to the zigbee2mqtt topic
+        LOG_INFO("[ZigbeeDeviceManager] Sending test message to Worm light");
+        emit mqttPublishNeeded("zigbee2mqtt/Worm/set", data);
+    });
 }
 
 ZigbeeDeviceManager::~ZigbeeDeviceManager()
@@ -22,7 +41,7 @@ ZigbeeDeviceManager::~ZigbeeDeviceManager()
 
 void ZigbeeDeviceManager::discoverDevices()
 {
-    // Starting Zigbee device discovery
+    LOG_INFO("[ZigbeeDeviceManager] Starting Zigbee device discovery");
     
     // Subscribe to bridge state and response topics
     // Only emit if bridge state unknown
@@ -35,6 +54,13 @@ void ZigbeeDeviceManager::discoverDevices()
     request["topic"] = "bridge/devices";
     QJsonDocument doc(request);
     emit mqttPublishNeeded("zigbee2mqtt/bridge/request/devices", doc.toJson(QJsonDocument::Compact));
+    
+    // Send a simple test message to Worm device
+    QTimer::singleShot(2000, this, [this]() {
+        QByteArray payload = "{\"state\":\"ON\"}";
+        LOG_INFO("[ZigbeeDeviceManager] Sending direct test ON message to Worm");
+        emit mqttPublishNeeded("zigbee2mqtt/Worm/set", payload);
+    });
 }
 
 bool ZigbeeDeviceManager::isRGBLight(const QJsonObject& device) const
@@ -125,13 +151,40 @@ void ZigbeeDeviceManager::handleMQTTMessage(const QString& topic, const QByteArr
                 info.has_rgb = true;
                 info.has_brightness = true;
                 
+                LOG_INFO("Creating ZigbeeLightDevice: %s, topic: %s, command topic: %s", 
+                     qUtf8Printable(friendly_name), 
+                     qUtf8Printable(deviceTopic), 
+                     qUtf8Printable(deviceTopic + "/set"));
+                
                 ZigbeeLightDevice* newDevice = new ZigbeeLightDevice(info);
-                connect(newDevice, &ZigbeeLightDevice::mqttPublishNeeded,
-                        this, &ZigbeeDeviceManager::mqttPublishNeeded);
+                
+                // Connect both signals - use direct string-based SIGNAL/SLOT for more reliable connection
+                bool connection1 = connect(newDevice, SIGNAL(publishMessage(QString,QByteArray)),
+                                        this, SIGNAL(mqttPublishNeeded(QString,QByteArray)),
+                                        Qt::DirectConnection);
+                                        
+                bool connection2 = connect(newDevice, SIGNAL(mqttPublishNeeded(QString,QByteArray)),
+                                        this, SIGNAL(mqttPublishNeeded(QString,QByteArray)),
+                                        Qt::DirectConnection);
+                
+                LOG_INFO("Signal connections: publishMessage=%s, mqttPublishNeeded=%s",
+                         connection1 ? "SUCCESS" : "FAILED",
+                         connection2 ? "SUCCESS" : "FAILED");
+                
+                // Test the connection by sending a direct message
+                QTimer::singleShot(1000, this, [this, friendly_name]() {
+                    QByteArray testMsg = "{\"state\":\"ON\"}";
+                    QString testTopic = QString("zigbee2mqtt/%1/set").arg(friendly_name);
+                    LOG_INFO("[ZigbeeDeviceManager] Testing message to: %s", qUtf8Printable(testTopic));
+                    emit mqttPublishNeeded(testTopic, testMsg);
+                });
+                
                 devices[deviceTopic] = newDevice;
                 
                 // Subscribe only to this device's state topic
                 emit mqttPublishNeeded(deviceTopic, QByteArray());  // Empty payload for subscribe
+            } else {
+                LOG_DEBUG("Zigbee device already exists: %s", qUtf8Printable(friendly_name));
             }
         }
         

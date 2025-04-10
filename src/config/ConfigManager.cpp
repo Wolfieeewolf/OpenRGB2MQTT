@@ -4,7 +4,7 @@
 #include <QJsonObject>
 #include <QStandardPaths>
 #include <QDir>
-#include <QDebug>
+#include "OpenRGB/LogManager.h"
 #include <QFileInfo>
 #include "utils/EncryptionHelper.h"
 
@@ -25,7 +25,7 @@ ConfigManager::ConfigManager(QObject* parent) :
     
     // If main config not loaded but legacy exists, try to migrate settings
     if (!config_loaded && legacy_exists) {
-        qDebug() << "Attempting to migrate from legacy config file";
+        LOG_INFO("Attempting to migrate from legacy config file");
         
         // Create default configuration first
         createDefaultConfig();
@@ -61,11 +61,11 @@ ConfigManager::ConfigManager(QObject* parent) :
                 if (legacy_config.contains("autoconnect"))
                     config["autoconnect"] = legacy_config["autoconnect"];
                 
-                qDebug() << "Migrated settings from legacy config";
+                LOG_INFO("Migrated settings from legacy config");
                 
                 // Save the new config with migrated settings
                 if (saveConfig(config_file)) {
-                    qDebug() << "Saved migrated settings to new config file";
+                    LOG_INFO("Saved migrated settings to new config file");
                 }
             }
             legacy_file.close();
@@ -98,13 +98,6 @@ void ConfigManager::createDefaultConfig()
     config["client_id"] = "openrgb2mqtt";
     config["base_topic"] = "homeassistant/openrgb";
     config["autoconnect"] = false;
-    
-    // DDP Settings
-    QJsonObject ddp;
-    ddp["enabled"] = false;
-    ddp["discovery_interval"] = 60; // seconds
-    ddp["devices"] = QJsonArray();
-    config["ddp"] = ddp;
 }
 
 QString ConfigManager::getConfigPath() const
@@ -125,7 +118,7 @@ bool ConfigManager::loadConfig(const QString& filename)
     
     if (!file.open(QIODevice::ReadOnly))
     {
-        qDebug() << "Failed to open config file for reading:" << file.errorString();
+        LOG_WARNING("Failed to open config file for reading: %s", qUtf8Printable(file.errorString()));
         return false;
     }
 
@@ -134,7 +127,7 @@ bool ConfigManager::loadConfig(const QString& filename)
     
     if (doc.isNull())
     {
-        qDebug() << "Invalid JSON in config file";
+        LOG_WARNING("Invalid JSON in config file");
         return false;
     }
 
@@ -235,88 +228,7 @@ void ConfigManager::setAutoConnect(bool enabled)
     emit mqttConfigChanged();
 }
 
-// DDP Settings
 
-bool ConfigManager::getDDPEnabled() const
-{
-    if (!config.contains("ddp") || !config["ddp"].isObject()) {
-        return false;
-    }
-    
-    return config["ddp"].toObject()["enabled"].toBool();
-}
-
-void ConfigManager::setDDPEnabled(bool enabled)
-{
-    // Ensure ddp object exists
-    if (!config.contains("ddp") || !config["ddp"].isObject()) {
-        config["ddp"] = QJsonObject();
-    }
-    
-    QJsonObject ddp = config["ddp"].toObject();
-    ddp["enabled"] = enabled;
-    config["ddp"] = ddp;
-    
-    saveConfig(config_file);
-    emit configChanged();
-    emit ddpConfigChanged();
-}
-
-QJsonArray ConfigManager::getDDPDevices() const
-{
-    if (!config.contains("ddp") || !config["ddp"].isObject()) {
-        return QJsonArray();
-    }
-    
-    QJsonObject ddp = config["ddp"].toObject();
-    if (!ddp.contains("devices") || !ddp["devices"].isArray()) {
-        return QJsonArray();
-    }
-    
-    return ddp["devices"].toArray();
-}
-
-void ConfigManager::setDDPDevices(const QJsonArray& devices)
-{
-    // Ensure ddp object exists
-    if (!config.contains("ddp") || !config["ddp"].isObject()) {
-        config["ddp"] = QJsonObject();
-    }
-    
-    QJsonObject ddp = config["ddp"].toObject();
-    ddp["devices"] = devices;
-    config["ddp"] = ddp;
-    
-    saveConfig(config_file);
-    emit configChanged();
-    emit ddpConfigChanged();
-}
-
-int ConfigManager::getDDPDiscoveryInterval() const
-{
-    if (!config.contains("ddp") || !config["ddp"].isObject()) {
-        return 60; // Default: 60 seconds
-    }
-    
-    QJsonObject ddp = config["ddp"].toObject();
-    return ddp["discovery_interval"].toInt(60);
-}
-
-void ConfigManager::setDDPDiscoveryInterval(int seconds)
-{
-    // Ensure ddp object exists
-    if (!config.contains("ddp") || !config["ddp"].isObject()) {
-        config["ddp"] = QJsonObject();
-    }
-    
-    QJsonObject ddp = config["ddp"].toObject();
-    ddp["discovery_interval"] = seconds;
-    config["ddp"] = ddp;
-    
-    saveConfig(config_file);
-    emit configChanged();
-    emit ddpConfigChanged();
-}
 bool ConfigManager::isDeviceEnabled(const std::string& device_name) const
 {
     QString device_key = QString::fromStdString(device_name);
@@ -347,7 +259,7 @@ void ConfigManager::setDeviceEnabled(const std::string& device_name, bool enable
     // Device state changed
     bool saved = saveConfig(config_file);
     if (!saved) {
-        qWarning() << "[ConfigManager] Failed to save device state to config!";
+        LOG_WARNING("[ConfigManager] Failed to save device state to config!");
     }
 }
 bool ConfigManager::forceSaveConfig()
@@ -364,7 +276,7 @@ bool ConfigManager::saveConfig(const QString& filename)
     
     if (!file.open(QIODevice::WriteOnly))
     {
-        qWarning() << "Failed to open config file for writing:" << file.errorString();
+        LOG_WARNING("Failed to open config file for writing: %s", qUtf8Printable(file.errorString()));
         
         // Try again with absolute path
         QString absolutePath = QFileInfo(filename).absoluteFilePath();

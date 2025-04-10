@@ -43,15 +43,6 @@ public:
     bool getAutoConnect() const;
     void setAutoConnect(bool enabled);
     
-    // DDP settings
-    bool getDDPEnabled() const;
-    void setDDPEnabled(bool enabled);
-    
-    QJsonArray getDDPDevices() const;
-    void setDDPDevices(const QJsonArray& devices);
-    
-    int getDDPDiscoveryInterval() const;
-    void setDDPDiscoveryInterval(int seconds);
  
     // Device settings
     bool isDeviceEnabled(const std::string& device_name) const;
@@ -60,7 +51,6 @@ public:
 signals:
     void configChanged();
     void mqttConfigChanged();
-    void ddpConfigChanged();
 
 public:
     // Make config file path accessible to other classes

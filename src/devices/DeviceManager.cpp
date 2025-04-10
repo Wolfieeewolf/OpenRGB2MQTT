@@ -1,12 +1,9 @@
 #include "DeviceManager.h"
 #include "mosquitto/MosquittoDeviceManager.h"
-#include "zigbee/ZigbeeDeviceManager.h"
-#include "esphome/ESPHomeDeviceManager.h"
-#include "ddp/DDPDeviceManager.h"
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QJsonDocument>
-#include <QDebug>
+#include "OpenRGB/LogManager.h"
 #include <QFile>
 #include <QCoreApplication>
 
@@ -14,9 +11,6 @@ DeviceManager::DeviceManager(ResourceManagerInterface* resource_manager, QObject
     : QObject(parent)
     , resource_manager(resource_manager)
     , mosquitto_manager(nullptr)
-    , zigbee_manager(nullptr)
-    , esphome_manager(nullptr)
-    , ddp_manager(nullptr)
     , update_timer(new QTimer(this))
     , config_manager(nullptr)
     , mqtt_handler(nullptr)
@@ -36,65 +30,39 @@ DeviceManager::DeviceManager(ResourceManagerInterface* resource_manager, QObject
                     this, SLOT(onProtocolDevicesChanged()));
         }
     } catch (const std::exception& e) {
-        qWarning() << "[DeviceManager] Error initializing MosquittoDeviceManager:" << e.what();
+        LOG_WARNING("[DeviceManager] Error initializing MosquittoDeviceManager: %s", e.what());
         mosquitto_manager = nullptr;
-    }
-
-    try {
-        // Initialize zigbee manager
-        zigbee_manager = new ZigbeeDeviceManager(this);
-        if (zigbee_manager) {
-            connect(zigbee_manager, SIGNAL(mqttPublishNeeded(QString,QByteArray)),
-                    this, SIGNAL(mqttPublishNeeded(QString,QByteArray)));
-            connect(zigbee_manager, SIGNAL(deviceListChanged()),
-                    this, SLOT(onProtocolDevicesChanged()));
-        }
-    } catch (const std::exception& e) {
-        qWarning() << "[DeviceManager] Error initializing ZigbeeDeviceManager:" << e.what();
-        zigbee_manager = nullptr;
-    }
-
-    // ESPHome is known to be problematic, so wrap in try/catch
-    try {
-        // Initialize ESPHome manager but don't connect signals yet - known to be problematic
-        esphome_manager = new ESPHomeDeviceManager(this);
-        if (esphome_manager) {
-            connect(esphome_manager, SIGNAL(mqttPublishNeeded(QString,QByteArray)),
-                    this, SIGNAL(mqttPublishNeeded(QString,QByteArray)));
-            connect(esphome_manager, SIGNAL(deviceListChanged()),
-                    this, SLOT(onProtocolDevicesChanged()));
-        }
-    } catch (const std::exception& e) {
-        qWarning() << "[DeviceManager] Error initializing ESPHomeDeviceManager:" << e.what();
-        esphome_manager = nullptr;
     }
 }
 
 DeviceManager::~DeviceManager()
 {
-    delete mosquitto_manager;
-    delete zigbee_manager;
-    delete esphome_manager;
-    delete update_timer;
-    // Note: ddp_manager is owned externally, don't delete it here
+    // Clean up any specific timers first
+    if (post_discovery_timer) {
+        post_discovery_timer->stop();
+        post_discovery_timer->disconnect();
+        delete post_discovery_timer;
+        post_discovery_timer = nullptr;
+    }
+
+    if (update_timer) {
+        update_timer->stop();
+        update_timer->disconnect();
+        delete update_timer;
+        update_timer = nullptr;
+    }
+    
+    // Delete device managers
+    if (mosquitto_manager) {
+        delete mosquitto_manager;
+        mosquitto_manager = nullptr;
+    }
+    
+    // Clean cached devices
+    cached_devices.clear();
 }
 
-void DeviceManager::setDDPDeviceManager(DDPDeviceManager* manager)
-{
-    if (ddp_manager == manager) return;
-    
-    if (ddp_manager) {
-        disconnect(ddp_manager, SIGNAL(deviceListChanged()),
-                this, SLOT(onProtocolDevicesChanged()));
-    }
-    
-    ddp_manager = manager;
-    
-    if (ddp_manager) {
-        connect(ddp_manager, SIGNAL(deviceListChanged()),
-                this, SLOT(onProtocolDevicesChanged()));
-    }
-}
+
 
 void DeviceManager::setMQTTHandler(QObject* handler)
 {
@@ -225,10 +193,10 @@ void DeviceManager::setConfigManager(ConfigManager* manager)
                         QMetaObject::invokeMethod(this, "updateDeviceList", Qt::QueuedConnection);
                     }
                     catch (const std::exception& e) {
-                        qWarning() << "Exception in post-discovery timer:" << e.what();
+                        LOG_WARNING("Exception in post-discovery timer: %s", e.what());
                     }
                     catch (...) {
-                        qWarning() << "Unknown exception in post-discovery timer";
+                        LOG_WARNING("Unknown exception in post-discovery timer");
                     }
                 });
             }
@@ -238,42 +206,23 @@ void DeviceManager::setConfigManager(ConfigManager* manager)
 
 void DeviceManager::discoverAllDevices()
 {
-    qInfo() << "[Discovery] Starting RGB device discovery...";
-    // Initialize ESPHome manager first
-    if (esphome_manager) {
-        esphome_manager->initializeManager();
-    }
-    // Then start discovery
+    LOG_INFO("[Discovery] Starting RGB device discovery...");
+    
+    // Start discovery for each protocol
     if (mosquitto_manager) {
         mosquitto_manager->discoverDevices();
-    }
-    if (zigbee_manager) {
-        zigbee_manager->discoverDevices();
-    }
-    if (esphome_manager) {
-        esphome_manager->discoverDevices();
-    }
-    
-    // Discover DDP devices if manager is available
-    if (ddp_manager) {
-        ddp_manager->discoverDevices();
     }
 }
 
 void DeviceManager::handleMQTTMessage(const QString& topic, const QByteArray& payload)
 {
     // Route messages to appropriate protocol manager
-    if (topic.startsWith("zigbee2mqtt/")) {
-        if (zigbee_manager) {
-            zigbee_manager->handleMQTTMessage(topic, payload);
-        }
-    } else if (topic.startsWith("homeassistant/")) {
+    if (topic.startsWith("homeassistant/")) {
+        LOG_DEBUG("Routing homeassistant message: %s", qUtf8Printable(topic));
         if (mosquitto_manager) {
             mosquitto_manager->handleMQTTMessage(topic, payload);
-        }
-    } else if (topic.startsWith("esphome/")) {
-        if (esphome_manager) {
-            esphome_manager->handleMQTTMessage(topic, payload);
+        } else {
+            LOG_WARNING("Received homeassistant MQTT message but no mosquitto manager available");
         }
     }
 }
@@ -294,8 +243,11 @@ void DeviceManager::onMQTTConnectionChanged(bool connected)
     if (connected) {
         // Start the post-discovery timer when MQTT connects
         if (post_discovery_timer) {
-            post_discovery_timer->start(5000);
+            post_discovery_timer->start(2000);
         }
+        
+        // Trigger device discovery when MQTT connects
+        QTimer::singleShot(500, this, &DeviceManager::discoverAllDevices);
     }
 }
 
@@ -310,7 +262,7 @@ void DeviceManager::onProtocolDevicesChanged()
             QTimer::singleShot(200, this, &DeviceManager::updateDeviceList);
         }
     } catch (...) {
-        qWarning() << "Error notifying ResourceManager of device changes";
+        LOG_WARNING("Error notifying ResourceManager of device changes");
     }
 }
 
@@ -338,9 +290,6 @@ void DeviceManager::updateDeviceList()
         
         // Collect devices from all managers into temporary lists without holding the lock
         std::vector<RGBController*> mosquitto_devices;
-        std::vector<RGBController*> zigbee_devices;
-        std::vector<RGBController*> esphome_devices;
-        std::vector<RGBController*> ddp_devices;
         
         // Get devices from each manager
         try {
@@ -351,40 +300,12 @@ void DeviceManager::updateDeviceList()
             // Silently ignore errors
         }
         
-        try {
-            if (zigbee_manager) {
-                zigbee_devices = zigbee_manager->getDevices();
-            }
-        } catch (...) {
-            // Silently ignore errors
-        }
-        
-        try {
-            if (esphome_manager) {
-                esphome_devices = esphome_manager->getDevices();
-            }
-        } catch (...) {
-            // Silently ignore errors
-        }
-        
-        try {
-            if (ddp_manager) {
-                ddp_devices = ddp_manager->getDevices();
-            }
-        } catch (...) {
-            // Silently ignore errors
-        }
-        
         // Process all devices without holding the lock for too long
         // First, create a combined list of all devices
         std::vector<RGBController*> all_devices;
-        all_devices.reserve(mosquitto_devices.size() + zigbee_devices.size() + 
-                           esphome_devices.size() + ddp_devices.size());
+        all_devices.reserve(mosquitto_devices.size());
         
         all_devices.insert(all_devices.end(), mosquitto_devices.begin(), mosquitto_devices.end());
-        all_devices.insert(all_devices.end(), zigbee_devices.begin(), zigbee_devices.end());
-        all_devices.insert(all_devices.end(), esphome_devices.begin(), esphome_devices.end());
-        all_devices.insert(all_devices.end(), ddp_devices.begin(), ddp_devices.end());
         
         // Now filter devices based on our status map
         for (auto device : all_devices) {
@@ -481,8 +402,9 @@ void DeviceManager::subscribeToTopics()
     // WORKAROUND: Skip calling protected methods in protocol managers
     
     // Just let the user know what is happening
-    qInfo() << "[DeviceManager] Skipping MQTT topic subscriptions (will be handled during device discovery)";
+    LOG_INFO("[DeviceManager] Skipping MQTT topic subscriptions (will be handled during device discovery)");
 }
+
 RGBController* DeviceManager::findDevice(const std::string& device_name)
 {
     QMutexLocker locker(&device_mutex);
@@ -521,7 +443,7 @@ bool DeviceManager::setZoneColor(const std::string& device_name, const std::stri
 {
     RGBController* device = findDevice(device_name);
     if (!device) {
-        qDebug() << "[DeviceManager] Device not found:" << device_name.c_str();
+        LOG_WARNING("[DeviceManager] Device not found: %s", device_name.c_str());
         return false;
     }
 
@@ -548,7 +470,7 @@ bool DeviceManager::setLEDColor(const std::string& device_name, int led_index, R
 {
     RGBController* device = findDevice(device_name);
     if (!device) {
-        qDebug() << "[DeviceManager] Device not found:" << device_name.c_str();
+        LOG_WARNING("[DeviceManager] Device not found: %s", device_name.c_str());
         return false;
     }
 
@@ -560,6 +482,7 @@ bool DeviceManager::setLEDColor(const std::string& device_name, int led_index, R
     device->SetLED(led_index, color);
     return true;
 }
+
 bool DeviceManager::addDeviceToOpenRGB(const std::string& device_name, bool add)
 {
     QMutexLocker locker(&device_mutex);
@@ -567,7 +490,7 @@ bool DeviceManager::addDeviceToOpenRGB(const std::string& device_name, bool add)
     try {
         // Validate inputs
         if (device_name.empty()) {
-            qWarning() << "[DeviceManager] Empty device name provided";
+            LOG_WARNING("[DeviceManager] Empty device name provided");
             return false;
         }
         
@@ -597,12 +520,12 @@ bool DeviceManager::addDeviceToOpenRGB(const std::string& device_name, bool add)
         
         return true;
     } catch (const std::exception& e) {
-        // Log specific exception using QDebug instead of LogManager to avoid linking errors
-        qCritical() << "[DeviceManager] Exception in addDeviceToOpenRGB:" << e.what();
+        // Use LogManager for error logging
+        LOG_ERROR("[DeviceManager] Exception in addDeviceToOpenRGB: %s", e.what());
         return false;
     } catch (...) {
         // Handle any other exceptions
-        qCritical() << "[DeviceManager] Unknown exception in addDeviceToOpenRGB";
+        LOG_ERROR("[DeviceManager] Unknown exception in addDeviceToOpenRGB");
         return false;
     }
 }
@@ -625,16 +548,6 @@ std::vector<std::pair<std::string, std::string>> DeviceManager::getAllAvailableD
     QMutexLocker locker(&device_mutex);
     std::vector<std::pair<std::string, std::string>> result;
     
-    // Get DDP devices
-    if (ddp_manager) {
-        QJsonArray devices = ddp_manager->getDeviceConfig();
-        for (int i = 0; i < devices.size(); i++) {
-            QJsonObject dev = devices[i].toObject();
-            std::string name = dev["name"].toString().toStdString();
-            result.push_back(std::make_pair(name, "DDP"));
-        }
-    }
-    
     // Get Mosquitto devices
     if (mosquitto_manager) {
         auto devices = mosquitto_manager->getDevices();
@@ -643,17 +556,6 @@ std::vector<std::pair<std::string, std::string>> DeviceManager::getAllAvailableD
             result.push_back(std::make_pair(name, "MQTT"));
         }
     }
-    
-    // Get Zigbee devices
-    if (zigbee_manager) {
-        auto devices = zigbee_manager->getDevices();
-        for (auto device : devices) {
-            std::string name = device->name;
-            result.push_back(std::make_pair(name, "Zigbee"));
-        }
-    }
-    
-    // ESPHome devices are currently disabled
     
     return result;
 }

@@ -1,5 +1,5 @@
 #include "DDPLightDevice.h"
-#include <QDebug>
+#include "OpenRGB/LogManager.h"
 
 DDPLightDevice::DDPLightDevice(const DeviceInfo& info)
     : controller(new DDPController(info.ip_address))

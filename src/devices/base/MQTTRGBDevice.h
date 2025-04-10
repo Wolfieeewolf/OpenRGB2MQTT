@@ -44,6 +44,7 @@ public:
     virtual void PublishState();
 
 signals:
+    // Signal for MQTT message publishing
     void mqttPublishNeeded(const QString& topic, const QByteArray& payload);
 
 protected:

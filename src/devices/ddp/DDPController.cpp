@@ -5,7 +5,7 @@
 #include <QNetworkInterface>
 #include <QTimer>
 #include <QEventLoop>
-#include <QDebug>
+#include "OpenRGB/LogManager.h"
 
 DDPController::DDPController(const QString& ip, QObject* parent)
     : QObject(parent)
@@ -34,7 +34,7 @@ bool DDPController::connect()
     if (socket->state() != QAbstractSocket::BoundState) {
         // For QUdpSocket, need to use the correct bind overload with quint16
         if (!socket->bind(0)) { // Bind to any port
-            qWarning() << "Failed to bind UDP socket:" << socket->errorString();
+            LOG_WARNING("Failed to bind UDP socket: %s", qUtf8Printable(socket->errorString()));
             return false;
         }
     }
@@ -124,7 +124,7 @@ QList<QPair<QString, QString>> DDPController::discoverDevices(int timeout)
     // Create temporary socket for discovery
     QUdpSocket discovery_socket;
     if (!discovery_socket.bind(0)) { // Bind to any port
-        qWarning() << "Failed to bind discovery socket:" << discovery_socket.errorString();
+        LOG_WARNING("Failed to bind discovery socket: %s", qUtf8Printable(discovery_socket.errorString()));
         return discovered_devices;
     }
     
@@ -285,8 +285,6 @@ void DDPController::handleStatusResponse(const QByteArray& data)
             device_type = "WLED";
         } else if (manufacturer.toLower().contains("tasmota")) {
             device_type = "Tasmota";
-        } else if (manufacturer.toLower().contains("esphome")) {
-            device_type = "ESPHome";
         } else {
             device_type = "Generic DDP";
         }

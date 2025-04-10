@@ -4,11 +4,7 @@ OpenRGB2MQTT is a plugin that integrates OpenRGB with MQTT, allowing you to cont
 
 ## Project Background
 
-This project aims to bridge the gap between OpenRGB and smart home automation by providing a robust MQTT integration. It supports multiple protocols including:
-- Native MQTT
-- Zigbee (via MQTT bridge)
-- DDP (Direct UDP) for WLED, Tasmota, and ESP-based controllers
-- ESPHome API and MQTT - Not currently active in this version
+This project aims to bridge the gap between OpenRGB and smart home automation by providing a robust MQTT integration.
 
 ## Features
 
@@ -16,7 +12,6 @@ This project aims to bridge the gap between OpenRGB and smart home automation by
 - **Auto-Discovery**: Automatically finds compatible RGB devices on your network
 - **Device Management**: Add or remove devices without restarting OpenRGB
 - **Live Updates**: Changes take effect immediately
-- **Multiple Protocol Support**: MQTT, Zigbee, and DDP
 - **Configuration Persistence**: Settings are automatically saved
 - **Auto-Connect**: Option to automatically connect on startup
 
@@ -34,32 +29,15 @@ As such:
 ## Known Issues
 
 - Sometimes crashes on loading plugin. Running OpenRGB again seems to work.
-- If you have Ikea Bulbs they will be slow to update. There is no way to fix this. Suggest using Philips Hue, LIFX or newer bulbs with Zigbee 3.0
-- Tested with Zigbee2MQTT and Home Assistant Mosquitto Core. Can't guarantee it will work with every MQTT RGB or Zigbee device.
-- ESPHome functionality is currently disabled in this version.
+- Tested with Home Assistant Mosquitto Core. Can't guarantee it will work with every MQTT RGB device.
 
-## Supported Communication Protocols
+## MQTT Integration
 
-### MQTT
 Connect with MQTT brokers to discover and control MQTT-compatible devices.
 - Supports username/password authentication
 - Configurable base topic
 - Automatic discovery of MQTT RGB devices
-
-### Zigbee
-Works through Zigbee2MQTT for Zigbee device support.
-- Automatic discovery of Zigbee RGB devices
-- Live control of color and brightness
-- Device status monitoring
-
-### DDP (Distributed Display Protocol)
-Direct UDP communication with devices supporting the DDP protocol:
-- WLED controllers (faster than MQTT)
-- Tasmota LED controllers
-- ESP-based DIY light controllers
-- OpenBeken firmware
-- Automatic network discovery of DDP devices
-- Manual device entry with customizable LED count
+- Compatible with Home Assistant MQTT integration
 
 ## Required DLLs
 When distributing, ensure these DLLs are present in the main OpenRGB folder:
@@ -95,7 +73,7 @@ git submodule update --init --recursive
 ## Installation
 
 1. Download the plugin file (OpenRGB2MQTT.dll for Windows, libOpenRGB2MQTT.so for Linux)
-2. Copy Qt5Mqtt.dll and Qt5Network.dll to you OpenRGB folder. Place in folder with the OpenRGB.exe
+2. Copy Qt5Mqtt.dll and Qt5Network.dll to your OpenRGB folder. Place in folder with the OpenRGB.exe
 3. Place it in your OpenRGB plugins folder
 4. Run OpenRGB
 5. Configure your MQTT broker settings in the plugin interface
@@ -113,7 +91,7 @@ If you're interested in the intersection of AI and development, this project ser
 
 ## Development Status
 
-This plugin is stable for the supported protocols. The ESPHome functionality is currently disabled but may be implemented in future versions.
+This plugin is stable for MQTT integration.
 
 ## Supporting Development
 

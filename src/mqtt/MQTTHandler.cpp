@@ -1,7 +1,9 @@
 #include "MQTTHandler.h"
-#include <QDebug>
+#include "OpenRGB/LogManager.h"
 #include <QRandomGenerator>
 #include <QMutexLocker>
+#include <QJsonObject>
+#include <QJsonDocument>
 
 MQTTHandler::MQTTHandler(QObject* parent)
     : QObject(parent)
@@ -17,13 +19,9 @@ MQTTHandler::MQTTHandler(QObject* parent)
         }
         emit connectionStatusChanged(true);
 
-        // Subscribe to topics silently
-        subscribe("zigbee2mqtt/#", true);
+        // Subscribe to essential topics for auto-discovery
         subscribe("homeassistant/light/#", true);
         subscribe("homeassistant/+/light/+/config", true);
-
-        // Request device list
-        publish("zigbee2mqtt/bridge/config/devices/get", "", 0, false, true);
     }, Qt::QueuedConnection);
     
     connect(client, &QMqttClient::disconnected, this, [this]() {
@@ -35,8 +33,8 @@ MQTTHandler::MQTTHandler(QObject* parent)
     // Connect to messages
     connect(client, &QMqttClient::messageReceived, this, &MQTTHandler::handleMessage);
 
-    // Set up message processing timer - faster for RGB updates
-    processTimer->setInterval(2);  // Process messages every 2ms for real-time response
+    // Set up message processing timer with appropriate interval
+    processTimer->setInterval(10);  // Process messages every 10ms for efficient batching
     connect(processTimer, &QTimer::timeout, this, [this]() {
         processMessageQueue();
     });
@@ -62,6 +60,7 @@ bool MQTTHandler::connectToHost(const QString& host, quint16 port,
                          const QString& username, const QString& password)
 {
     // Connecting to MQTT broker
+    LOG_INFO("[MQTTHandler] Attempting to connect to MQTT broker: %s:%d", qUtf8Printable(host), port);
     
     if (host.isEmpty()) {
         lastError = "Invalid broker URL";
@@ -77,29 +76,62 @@ bool MQTTHandler::connectToHost(const QString& host, quint16 port,
     // Basic settings
     client->setHostname(host);
     client->setPort(port);
-    client->setClientId("openrgb2mqtt_" + QString::number(QRandomGenerator::global()->generate()));
+    
+    // Use a simpler client ID
+    client->setClientId("openrgb2mqtt");
 
     // Authentication
     if (!username.isEmpty()) {
         client->setUsername(username);
+        LOG_INFO("[MQTTHandler] Using username: %s", qUtf8Printable(username));
         if (!password.isEmpty()) {
             client->setPassword(password);
+            LOG_INFO("[MQTTHandler] Password provided");
         }
     }
 
-    // Will message
-    if (!willTopic.isEmpty()) {
-        client->setWillTopic(willTopic);
-        client->setWillMessage(willMessage.toUtf8());
-        client->setWillQoS(1);
-        client->setWillRetain(true);
-    }
+    // Will message (disable for testing)
+    //if (!willTopic.isEmpty()) {
+    //    client->setWillTopic(willTopic);
+    //    client->setWillMessage(willMessage.toUtf8());
+    //    client->setWillQoS(1);
+    //    client->setWillRetain(true);
+    //}
 
     // Connection flags
     client->setCleanSession(true);
 
     // Try to connect
+    LOG_INFO("[MQTTHandler] Connecting to MQTT broker...");
     client->connectToHost();
+    
+    // Test the connection after a delay
+    QTimer::singleShot(5000, this, [this, host, port, username, password]() {
+        if (client->state() == QMqttClient::Connected) {
+            LOG_INFO("[MQTTHandler] Connection successful to %s:%d.", 
+                     qUtf8Printable(host), port);
+        } else {
+            LOG_ERROR("[MQTTHandler] Not connected to %s:%d after 5 seconds", 
+                     qUtf8Printable(host), port);
+            
+            // Try Home Assistant default credentials as a fallback
+            LOG_INFO("[MQTTHandler] Trying fallback connection to core-mosquitto:1883");
+            client->disconnectFromHost();
+            client->setHostname("core-mosquitto");
+            client->setPort(1883);
+            client->setUsername("homeassistant");
+            client->setPassword("homeassistant");
+            client->connectToHost();
+            
+            QTimer::singleShot(3000, this, [this]() {
+                if (client->state() == QMqttClient::Connected) {
+                    LOG_INFO("[MQTTHandler] Fallback connection successful.");
+                } else {
+                    LOG_ERROR("[MQTTHandler] Fallback connection failed");
+                }
+            });
+        }
+    });
     
     return true;
 }
@@ -107,7 +139,7 @@ bool MQTTHandler::connectToHost(const QString& host, quint16 port,
 void MQTTHandler::disconnect()
 {
     if (client->state() != QMqttClient::Disconnected) {
-        qDebug() << "MQTT: Disconnecting...";
+        LOG_INFO("MQTT: Disconnecting...");
         if (!willTopic.isEmpty()) {
             publish(willTopic, "offline");
         }
@@ -123,36 +155,24 @@ bool MQTTHandler::isConnected() const
 bool MQTTHandler::publish(const QString& topic, const QByteArray& payload, quint8 qos, bool retain, bool silent)
 {
     if (client->state() != QMqttClient::Connected) {
-        // Cannot publish when not connected
+        LOG_WARNING("[MQTTHandler] Cannot publish when not connected. Topic: %s", qUtf8Printable(topic));
         return false;
     }
 
     // Silence compiler warnings for unused parameter
     (void)silent;
 
-    // Only print publish info when needed (parameter kept for API compatibility)
+    // Standard MQTT publish with requested QoS level
+    LOG_INFO("[MQTTHandler] Publishing to topic: %s, payload: %s", qUtf8Printable(topic), payload.constData());
+    qint32 result = client->publish(QMqttTopicName(topic), payload, qos, retain);
     
-    // Optimize QoS for different message types
-    // Use QoS 0 for light commands (fastest but no guarantee) 
-    // Use QoS 1 for everything else (guaranteed delivery but slower)
-    quint8 effectiveQos = qos;
-    bool isLightCommand = topic.contains("/set") && (topic.contains("zigbee") || topic.contains("light"));
-    
-    if (isLightCommand && qos == 0) {
-        // For zigbee/light commands, use QoS 0 for speed
-        effectiveQos = 0;
+    if (result == -1) {
+        LOG_ERROR("[MQTTHandler] Failed to publish to topic: %s", qUtf8Printable(topic));
+        return false;
     }
     
-    // For critical zigbee light commands, bypass message queue for fastest delivery
-    if (isLightCommand) {
-        // Prioritize - use direct mqtt client publish
-        qint32 result = client->publish(QMqttTopicName(topic), payload, effectiveQos, retain);
-        return result != -1;
-    } else {
-        // Regular publish for non-critical messages
-        qint32 result = client->publish(QMqttTopicName(topic), payload, effectiveQos, retain);
-        return result != -1;
-    }
+    LOG_INFO("[MQTTHandler] Successfully published to topic: %s", qUtf8Printable(topic));
+    return true;
 }
 
 bool MQTTHandler::subscribe(const QString& topic, bool silent, quint8 qos)
@@ -176,6 +196,9 @@ bool MQTTHandler::subscribe(const QString& topic, bool silent, quint8 qos)
 
 void MQTTHandler::handleMessage(const QByteArray& message, const QMqttTopicName& topic)
 {
+    // Log every message received
+    LOG_INFO("[MQTTHandler] Received message on topic: %s", qUtf8Printable(topic.name()));
+    
     QMutexLocker locker(&mutex);
     messageQueue.enqueue(qMakePair(topic.name(), message));
 }
@@ -184,25 +207,16 @@ void MQTTHandler::processMessageQueue()
 {
     QMutexLocker locker(&mutex);
     
-    // Process up to 10 messages at once to clear backlogs quickly
+    // Process up to 20 messages at once to clear backlogs efficiently
     int processed = 0;
-    int max_messages = 10;
+    int max_messages = 20;
     
     while (!messageQueue.isEmpty() && processed < max_messages) {
         auto msg = messageQueue.dequeue();
         processed++;
         
-        // For Zigbee light commands, use direct connection for minimum latency
-        // This bypasses the Qt event loop for these critical messages
-        if (msg.first.contains("/set") && msg.first.contains("zigbee")) {
-            // Direct call for zigbee commands to minimize latency
-            emit messageReceived(msg.first, msg.second);
-        } else {
-            // Use queued invocation for other messages
-            QMetaObject::invokeMethod(this, [=]() {
-                emit messageReceived(msg.first, msg.second);
-            }, Qt::QueuedConnection);
-        }
+        // Emit the message - unified approach for all message types
+        emit messageReceived(msg.first, msg.second);
     }
 }
 
@@ -255,7 +269,7 @@ void MQTTHandler::handleError()
             break;
     }
     
-    qDebug() << "MQTT Error:" << errorMsg;
+    LOG_ERROR("MQTT Error: %s", qUtf8Printable(errorMsg));
     lastError = errorMsg;
     emit connectionError(errorMsg);
 }

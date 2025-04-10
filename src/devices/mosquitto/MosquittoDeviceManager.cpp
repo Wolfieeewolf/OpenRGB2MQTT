@@ -2,7 +2,7 @@
 #include "MosquittoLightDevice.h"
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <QDebug>
+#include "OpenRGB/LogManager.h"
 
 MosquittoDeviceManager::MosquittoDeviceManager(QObject* parent)
     : QObject(parent)
@@ -65,7 +65,7 @@ void MosquittoDeviceManager::processDeviceConfig(const QString& topic, const QBy
     if (info.name.isEmpty()) {
         info.name = config.value("name").toString();
     }
-    qDebug() << "Device name set to:" << info.name;
+    LOG_DEBUG("Device name set to: %s", qUtf8Printable(info.name));
     
     // Extract all required MQTT topics
     info.command_topic = config.value("rgb_cmd_t").toString();

@@ -1,7 +1,7 @@
 #include "MosquittoLightDevice.h"
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <QDebug>
+#include "OpenRGB/LogManager.h"
 
 MosquittoLightDevice::MosquittoLightDevice(const LightInfo& info)
     : MQTTRGBDevice(info)

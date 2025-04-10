@@ -1,5 +1,12 @@
 #pragma once
 
+/*---------------------------------*\
+| DDPController.h                    |
+|                                   |
+| Implementation for DDP protocol    |
+| to communicate with LED devices    |
+\*---------------------------------*/
+
 #include <QString>
 #include <QUdpSocket>
 #include <QHostAddress>

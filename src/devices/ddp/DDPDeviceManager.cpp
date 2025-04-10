@@ -1,5 +1,5 @@
 #include "DDPDeviceManager.h"
-#include <QDebug>
+#include "OpenRGB/LogManager.h"
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QThread>
@@ -33,6 +33,9 @@ void DDPDeviceManager::setEnabled(bool enabled)
         discovery_timer->stop();
         clearDevices();
     }
+    
+    // Emit signal when state changes
+    emit deviceListChanged();
 }
 
 bool DDPDeviceManager::isEnabled() const
